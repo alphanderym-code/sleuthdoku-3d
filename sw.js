@@ -1,5 +1,5 @@
 // Tiny Crimes service worker. Regenerate the list with: node tools/sw-list.mjs
-const CACHE = 'tinycrimes-v2';
+const CACHE = 'tinycrimes-v3';
 const PRECACHE = [
   './',
   './index.html',
@@ -35,7 +35,12 @@ const PRECACHE = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(PRECACHE)).then(() => self.skipWaiting()));
+  // cache:'reload' bypasses the browser HTTP cache, so a new version never precaches stale files.
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(PRECACHE.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {
@@ -49,16 +54,41 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
-  e.respondWith(
-    caches.match(req, { ignoreSearch: true }).then((hit) => {
-      if (hit) return hit;
-      return fetch(req).then((res) => {
-        if (res && (res.ok || res.type === 'opaque')) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
-        }
-        return res;
-      }).catch(() => caches.match('./index.html'));
-    })
-  );
+  const sameOrigin = new URL(req.url).origin === self.location.origin;
+  const fromCache = () => caches.match(req, { ignoreSearch: true });
+  const fromNetwork = () => fetch(req, sameOrigin ? { cache: 'no-cache' } : undefined).then((res) => {
+    if (res && (res.ok || res.type === 'opaque')) {
+      const copy = res.clone();
+      caches.open(CACHE).then((c) => c.put(req, copy));
+    }
+    return res;
+  });
+
+  if (!sameOrigin) {
+    // Fonts and other third-party files rarely change: cache first.
+    e.respondWith(fromCache().then((hit) => hit || fromNetwork()));
+    return;
+  }
+
+  // Game files: network first so a pushed update shows on the next load.
+  // Fall back to the cache when offline or when the network takes over 3 s.
+  e.respondWith(new Promise((resolve) => {
+    let done = false;
+    const useCache = () => fromCache().then((hit) => {
+      if (done) return;
+      if (hit) { done = true; resolve(hit); }
+    });
+    const timer = setTimeout(useCache, 3000);
+    fromNetwork().then((res) => {
+      clearTimeout(timer);
+      if (!done) { done = true; resolve(res); }
+    }).catch(() => {
+      clearTimeout(timer);
+      fromCache().then((hit) => {
+        if (done) return;
+        done = true;
+        resolve(hit || caches.match('./index.html'));
+      });
+    });
+  }));
 });
