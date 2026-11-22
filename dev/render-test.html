@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sleuthdoku 3D — render test</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px/1.35 system-ui, sans-serif; background: #f3e9f5; color: #2b2b3a; }
+  #app { display: flex; height: 100%; }
+  #board { position: relative; flex: 1; min-width: 0; overflow: hidden; }
+  #side { width: 300px; display: flex; flex-direction: column; gap: 6px; padding: 8px; box-sizing: border-box; background: #fff8f0; border-left: 2px solid #2b2b3a; }
+  #side button { margin: 2px; padding: 4px 8px; border: 2px solid #2b2b3a; border-radius: 8px; background: #ffd84d; cursor: pointer; font-weight: 600; }
+  #log { flex: 1; overflow: auto; background: #2b2b3a; color: #dfe; font: 11px/1.3 monospace; padding: 6px; border-radius: 6px; white-space: pre; }
+  #portraits img { width: 64px; height: 64px; background: #e8e0f5; border-radius: 50%; margin: 2px; border: 2px solid #2b2b3a; }
+  label { display: inline-flex; align-items: center; gap: 4px; }
+  @media (max-width: 700px) { #app { flex-direction: column; } #side { width: 100%; height: 45%; border-left: 0; border-top: 2px solid #2b2b3a; } }
+</style>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}
+</script>
+</head>
+<body>
+<div id="app">
+  <div id="board"></div>
+  <div id="side">
+    <div>
+      <button id="bSample">Load sample</button>
+      <label>N <select id="selN"><option>5</option><option>6</option><option>7</option><option>8</option><option selected>9</option></select></label>
+      <button id="bRandom">Random puzzle</button>
+    </div>
+    <div>
+      <button id="bSolve">Place solution</button>
+      <button id="bShuffle">Random state</button>
+      <button id="bMove">Move one</button>
+      <button id="bRemove">Remove one</button>
+      <button id="bClear">Clear</button>
+      <button id="bSel">Select next</button>
+    </div>
+    <div>
+      <button id="bHi">highlightCells</button>
+      <button id="bWrong">playWrong</button>
+      <button id="bWin">playWin</button>
+      <button id="bCam">resetCamera</button>
+      <button id="bPortrait">portraits</button>
+    </div>
+    <div>Mouse: L = tap / hold / drag-paint, R = rotate, wheel = zoom. Tap toggles a note for the selected char, hold places it.</div>
+    <div id="portraits"></div>
+    <div id="log"></div>
+  </div>
+</div>
+<script type="module">
+import { BoardView } from '../js/render/scene.js';
+import { SAMPLE_PUZZLE } from '../js/puzzles/sample.js';
+import { OBJECT_TYPES, FLOOR_TYPES } from '../js/model/objects.js';
+
+const logEl = document.getElementById('log');
+const log = (...a) => { logEl.textContent = a.join(' ') + '\n' + logEl.textContent.slice(0, 4000); };
+window.addEventListener('error', (e) => log('ERROR', e.message));
+
+const view = new BoardView(document.getElementById('board'));
+window.view = view;
+let puzzle = null;
+let state = null;
+const freshState = () => ({ placements: {}, notes: {}, marks: [], autoMarks: [], selected: null, hover: null });
+
+function computeAuto() {
+  const out = new Set();
+  const N = puzzle.size;
+  for (const p of Object.values(state.placements)) {
+    for (let i = 0; i < N; i++) { out.add(`${p.r},${i}`); out.add(`${i},${p.c}`); }
+  }
+  state.autoMarks = [...out];
+}
+function push() { computeAuto(); view.setState(state); }
+
+function load(p) {
+  puzzle = p; state = freshState();
+  state.selected = p.characters[0]?.id ?? null;
+  view.loadPuzzle(p); push();
+  log('loaded', p.id, 'N=' + p.size);
+}
+
+// Random puzzle for framing / model tests
+const LOOK = {
+  hair: ['short', 'long', 'bun', 'bald', 'curly', 'ponytail', 'spiky'],
+  acc: ['hat', 'glasses', 'beard', 'mustache', 'bowtie', 'scarf', null],
+  skin: ['#f1c27d', '#c68642', '#ffdbac', '#8d5524', '#e0ac69'],
+  col: ['#4f86c6', '#d9534f', '#6abf69', '#9b6bd1', '#f0c419', '#f08a4b', '#5bc0be', '#e57a9a', '#7a7a7a'],
+};
+function randomPuzzle(N) {
+  const keys = 'ABCDEFGHIJ';
+  const rooms = [];
+  for (let r = 0; r < N; r++) {
+    let s = '';
+    for (let c = 0; c < N; c++) s += keys[Math.floor(r / 3) * 3 + Math.floor(c / 3)];
+    rooms.push(s);
+  }
+  const roomInfo = {};
+  const names = ['Library', 'Ballroom', 'Garden', 'Beach', 'Cellar', 'Lounge', 'Snowfield', 'Hall', 'Bedroom', 'Conservatory'];
+  [...new Set(rooms.join(''))].forEach((k, i) => { roomInfo[k] = { name: names[i % names.length], floor: FLOOR_TYPES[i % FLOOR_TYPES.length] }; });
+  const types = Object.keys(OBJECT_TYPES);
+  const objects = []; const used = new Set();
+  types.forEach((t, i) => {
+    let r, c, k, tries = 0;
+    do { r = Math.floor(Math.random() * N); c = Math.floor(Math.random() * N); k = r + ',' + c; } while (used.has(k) && ++tries < 50);
+    if (!used.has(k)) { used.add(k); objects.push({ type: t, r, c }); }
+  });
+  const characters = [];
+  for (let i = 0; i < N; i++) {
+    characters.push({
+      id: 'ABCDEFGHI'[i], name: 'Char' + i, gender: i % 2 ? 'm' : 'f', victim: i === N - 1,
+      look: { skin: LOOK.skin[i % 5], hair: ['#3b2a1a', '#e0a040', '#1b1b1b', '#a0522d', '#7a7a7a'][i % 5],
+        outfit: LOOK.col[i % LOOK.col.length], hairStyle: LOOK.hair[i % 7], accessory: LOOK.acc[(i * 3) % 7] },
+      clues: [],
+    });
+  }
+  // a valid-ish latin placement avoiding blocking cells
+  const solution = {}; const rowsUsed = new Set(), colsUsed = new Set();
+  for (const ch of characters) {
+    outer: for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      if (rowsUsed.has(r) || colsUsed.has(c)) continue;
+      const o = objects.find((o) => o.r === r && o.c === c);
+      if (o && OBJECT_TYPES[o.type].blocking) continue;
+      solution[ch.id] = { r, c }; rowsUsed.add(r); colsUsed.add(c); break outer;
+    }
+  }
+  return { id: 'rand-' + N, title: 'Random', difficulty: 'test', size: N, rooms, roomInfo, objects, characters, solution, murderer: 'A' };
+}
+
+const isFree = (r, c) => {
+  const o = (puzzle.objects || []).find((o) => o.r === r && o.c === c);
+  if (o && OBJECT_TYPES[o.type]?.blocking) return false;
+  return !Object.values(state.placements).some((p) => p.r === r && p.c === c);
+};
+const toggleNote = (r, c, id) => {
+  const k = `${r},${c}`; const a = new Set(state.notes[k] || []);
+  a.has(id) ? a.delete(id) : a.add(id);
+  state.notes[k] = [...a];
+};
+
+// Events
+view.on('cellTap', (e) => { log('cellTap', JSON.stringify(e)); if (state.selected) { toggleNote(e.r, e.c, state.selected); push(); } });
+view.on('cellHold', (e) => {
+  log('cellHold', JSON.stringify(e));
+  const id = state.selected; if (!id) return;
+  const cur = state.placements[id];
+  if (cur && cur.r === e.r && cur.c === e.c) delete state.placements[id];
+  else if (isFree(e.r, e.c)) state.placements[id] = { r: e.r, c: e.c };
+  push();
+});
+view.on('cellPaint', (e) => { log('cellPaint', JSON.stringify(e)); if (state.selected) { if (e.start) toggleNote(e.start.r, e.start.c, state.selected); toggleNote(e.r, e.c, state.selected); push(); } });
+view.on('cellHover', (e) => { state.hover = e; view.setState(state); });
+view.on('tokenTap', (e) => { log('tokenTap', JSON.stringify(e)); state.selected = e.id; push(); });
+
+const $ = (id) => document.getElementById(id);
+$('bSample').onclick = () => load(SAMPLE_PUZZLE);
+$('bRandom').onclick = () => load(randomPuzzle(+$('selN').value));
+$('bSolve').onclick = () => { state.placements = JSON.parse(JSON.stringify(puzzle.solution || {})); push(); };
+$('bShuffle').onclick = () => {
+  const N = puzzle.size; const ids = puzzle.characters.map((c) => c.id);
+  state.notes = {}; state.marks = [];
+  for (let i = 0; i < N * 2; i++) {
+    const r = Math.floor(Math.random() * N), c = Math.floor(Math.random() * N);
+    state.notes[`${r},${c}`] = ids.filter(() => Math.random() < 0.5);
+  }
+  for (let i = 0; i < N; i++) state.marks.push(`${Math.floor(Math.random() * N)},${Math.floor(Math.random() * N)}`);
+  push();
+};
+$('bMove').onclick = () => {
+  const ids = Object.keys(state.placements); if (!ids.length) return;
+  const id = ids[Math.floor(Math.random() * ids.length)]; const N = puzzle.size;
+  for (let k = 0; k < 50; k++) { const r = Math.floor(Math.random() * N), c = Math.floor(Math.random() * N); if (isFree(r, c)) { state.placements[id] = { r, c }; break; } }
+  push();
+};
+$('bRemove').onclick = () => { const ids = Object.keys(state.placements); if (ids.length) { delete state.placements[ids[0]]; push(); } };
+$('bClear').onclick = () => { const sel = state.selected; state = freshState(); state.selected = sel; push(); };
+$('bSel').onclick = () => {
+  const ids = puzzle.characters.map((c) => c.id);
+  state.selected = ids[(ids.indexOf(state.selected) + 1) % ids.length]; push(); log('selected', state.selected);
+};
+$('bHi').onclick = () => view.highlightCells([{ r: 0, c: 0 }, '1,1', { r: 2, c: 2 }]);
+$('bWrong').onclick = () => view.playWrong(Object.keys(state.placements).slice(0, 2));
+$('bWin').onclick = () => {
+  const victim = puzzle.characters.find((c) => c.victim)?.id;
+  view.playWin({ victimId: victim, murdererId: puzzle.murderer });
+};
+$('bCam').onclick = () => view.resetCamera();
+$('bPortrait').onclick = () => {
+  const box = $('portraits'); box.innerHTML = '';
+  const t0 = performance.now();
+  for (const ch of puzzle.characters) { const img = new Image(); img.src = BoardView.portrait(ch, 128); img.title = ch.name; box.appendChild(img); }
+  log('portraits in', Math.round(performance.now() - t0), 'ms');
+};
+
+load(SAMPLE_PUZZLE);
+window.__renderTestReady = true;
+</script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>models preview</title>
+<style>html,body{margin:0;background:#3b3452;overflow:hidden}canvas{display:block}</style>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}
+</script></head><body>
+<script type="module">
+import * as THREE from 'three';
+import { createObject, createFigurine, disposeObject } from '../js/render/models.js';
+import { OBJECT_TYPES } from '../js/model/objects.js';
+const q = new URLSearchParams(location.search);
+const W = innerWidth, H = innerHeight;
+const r = new THREE.WebGLRenderer({ antialias: true }); r.setSize(W, H); r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
+r.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(r.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#5a4f78');
+scene.add(new THREE.HemisphereLight('#fff4e6', '#a99ccc', 1.4));
+const d = new THREE.DirectionalLight('#ffe2b8', 2.2); d.position.set(-2, 5, 4); d.castShadow = true; d.shadow.mapSize.set(2048, 2048);
+Object.assign(d.shadow.camera, { left: -8, right: 8, top: 8, bottom: -8, near: 0.5, far: 20 }); scene.add(d);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshToonMaterial({ color: '#cbb89a' })); floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+const idles = [];
+const mode = q.get('m') || 'objects';
+const cam = new THREE.PerspectiveCamera(30, W / H, 0.1, 100);
+if (mode === 'objects') {
+  const types = q.get('o') ? q.get('o').split(',') : Object.keys(OBJECT_TYPES); const cols = +(q.get('c') || 3);
+  types.forEach((t, i) => { const o = createObject(t, i * 7 + 3); o.position.set((i % cols) * 1.4, 0, Math.floor(i / cols) * 1.4); scene.add(o); if (o.userData.idle) idles.push(o.userData.idle); });
+  const cx = (cols - 1) * 0.7, cz = (Math.ceil(types.length / cols) - 1) * 0.7;
+  const el = +(q.get('el') || 50) * Math.PI / 180, dist = +(q.get('d') || 11);
+  cam.position.set(cx, Math.cos(el) * dist, cz + Math.sin(el) * dist); cam.lookAt(cx, 0.3, cz);
+} else {
+  const looks = [
+    { id: 'A', look: { skin: '#f1c27d', hair: '#3b2a1a', outfit: '#4f86c6', hairStyle: 'short', accessory: null } },
+    { id: 'B', look: { skin: '#a0693f', hair: '#7a4a21', outfit: '#b5179e', hairStyle: 'ponytail', accessory: 'glasses' } },
+    { id: 'C', look: { skin: '#f5cba7', hair: '#b5371f', outfit: '#06d6a0', hairStyle: 'bun', accessory: 'bowtie' } },
+    { id: 'D', look: { skin: '#e0ac69', hair: '#2b1b10', outfit: '#e63946', hairStyle: 'curly', accessory: 'hat' } },
+    { id: 'E', look: { skin: '#8d5524', hair: '#4a2c17', outfit: '#ffd23f', hairStyle: 'spiky', accessory: 'scarf' } },
+    { id: 'F', look: { skin: '#f1c27d', hair: '#9a9a9a', outfit: '#3a86ff', hairStyle: 'bald', accessory: 'beard' } },
+    { id: 'G', look: { skin: '#f5cba7', hair: '#3fa7d6', outfit: '#8338ec', hairStyle: 'long', accessory: 'hat' } },
+    { id: 'H', look: { skin: '#6b4226', hair: '#e8e8e8', outfit: '#2ec4b6', hairStyle: 'short', accessory: 'mustache' } },
+    { id: 'I', victim: true, look: { skin: '#f1c27d', hair: '#4a2c17', outfit: '#ff7b00', hairStyle: 'curly', accessory: null } },
+  ];
+  const only = q.get('i'); looks.forEach((c, i) => { if (only !== null && +only !== i) return; const f = createFigurine(c); f.position.set(only !== null ? 2 : (i % 5) * 1.0, 0, only !== null ? 0.5 : Math.floor(i / 5) * 1.0); scene.add(f); if (f.userData.idle) idles.push(f.userData.idle); });
+  const el = +(q.get('el') || 50) * Math.PI / 180, dist = +(q.get('d') || 6);
+  cam.position.set(2, Math.cos(el) * dist, 0.5 + Math.sin(el) * dist); cam.lookAt(2, 0.4, 0.5);
+}
+const clock = new THREE.Clock();
+function loop() { const t = q.get('t') ? +q.get('t') : clock.getElapsedTime(); idles.forEach((f) => f(t)); r.render(scene, cam); requestAnimationFrame(loop); }
+loop();
+window.__scene = scene;
+window.__ready = true;
+addEventListener('error', (e) => { document.title = 'ERR ' + e.message; });
+</script></body></html>
