@@ -1,6 +1,6 @@
 {
-  "name": "Sleuthdoku 3D",
-  "short_name": "Sleuthdoku",
+  "name": "Tiny Crimes",
+  "short_name": "Tiny Crimes",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -1,4 +1,4 @@
-# Sleuthdoku 3D
+# Tiny Crimes
 
 A cartoon 3D murder-mystery logic puzzle built with three.js. It is an original game in the grid-deduction genre.
 

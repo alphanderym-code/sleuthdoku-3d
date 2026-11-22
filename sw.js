@@ -1,5 +1,5 @@
-// Sleuthdoku 3D service worker. Regenerate the list with: node tools/sw-list.mjs
-const CACHE = 'sleuthdoku-v1';
+// Tiny Crimes service worker. Regenerate the list with: node tools/sw-list.mjs
+const CACHE = 'tinycrimes-v2';
 const PRECACHE = [
   './',
   './index.html',

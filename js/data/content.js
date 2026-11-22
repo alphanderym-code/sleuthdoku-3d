@@ -1,4 +1,4 @@
-// Content data for Sleuthdoku 3D. Pure ES module (Node/browser safe).
+// Content data for Tiny Crimes. Pure ES module (Node/browser safe).
 
 const M = 'm', F = 'f';
 const n = (name, gender) => ({ name, gender });

@@ -14,7 +14,7 @@ let generatePuzzle = null;
 let CASES = [SAMPLE_PUZZLE];
 
 async function tryImport(path) {
-  try { return await import(path); } catch (e) { console.warn('[sleuthdoku] could not load', path, e); return null; }
+  try { return await import(path); } catch (e) { console.warn('[tinycrimes] could not load', path, e); return null; }
 }
 const modsReady = (async () => {
   const [s, sc, cl, so, hi, ge, ca] = await Promise.all([

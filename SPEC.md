@@ -1,4 +1,4 @@
-# Sleuthdoku 3D — Technical Spec (source of truth)
+# Tiny Crimes — Technical Spec (source of truth)
 
 An original 3D murder-mystery logic puzzle game. Original name, characters, scenes, puzzles and art.
 Rules are a classic grid-deduction genre: place every character on a grid using clues; find the murderer.

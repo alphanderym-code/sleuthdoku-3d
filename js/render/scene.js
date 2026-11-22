@@ -1,4 +1,4 @@
-// BoardView — three.js renderer for Sleuthdoku 3D (see SPEC.md "js/render/scene.js").
+// BoardView — three.js renderer for Tiny Crimes (see SPEC.md "js/render/scene.js").
 // Toon diorama board with 3D tokens, gesture input (tap / hold / paint), limited orbit camera.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';

@@ -1,4 +1,4 @@
-// Procedural low-poly cartoon models for Sleuthdoku 3D.
+// Procedural low-poly cartoon models for Tiny Crimes.
 // Everything is built from three.js primitives, toon-shaded, with inverted-hull outlines.
 // Conventions: each model fits a 1x1 cell, centred on x/z = 0, resting on y = 0, "front" faces +z (south).
 // Implementation lives in ./models/ (kit.js = helpers, objects.js = furniture/scenery, figurine.js = characters).
