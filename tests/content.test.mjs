@@ -49,4 +49,14 @@ for (let seed = 1; seed <= 50; seed++) {
 const sigs = new Set();
 for (let seed = 1; seed <= 50; seed++) sigs.add(pickCast(makeRng(seed), 9).map((c) => c.name).join());
 assert.ok(sigs.size >= 45, 'casts differ across seeds');
+for (let seed = 1; seed <= 400; seed++) {
+  const rng = makeRng(seed);
+  for (let k = 0; k < 10; k++) {
+    const m = randomLook(rng, 'm'), f = randomLook(rng, 'f');
+    assert.ok(!['long', 'bun', 'ponytail'].includes(m.hairStyle), 'male hair style: ' + m.hairStyle);
+    assert.ok(m.accessory !== 'scarf', 'male scarf');
+    assert.ok(!['#ff6fb5', '#b5179e', '#ef476f'].includes(m.outfit), 'male pink outfit');
+    assert.ok(f.accessory !== 'beard' && f.accessory !== 'mustache' && f.hairStyle !== 'bald' && f.hairStyle !== 'slick', 'female look');
+  }
+}
 console.log('content tests passed');

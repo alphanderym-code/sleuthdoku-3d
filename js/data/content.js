@@ -289,21 +289,21 @@ export const SCENES = [
 ];
 
 
+const MALE_HAIR = ['short', 'short', 'slick', 'spiky', 'curly', 'bald'];
+const FEMALE_HAIR = ['short', 'long', 'long', 'bun', 'curly', 'ponytail', 'spiky'];
+const MALE_ACC = [null, null, 'hat', 'glasses', 'beard', 'mustache', 'bowtie'];
+const FEMALE_ACC = [null, null, 'hat', 'glasses', 'scarf', 'scarf'];
+const PINKS = ['#ff6fb5', '#b5179e', '#ef476f'];
+const MALE_OUTFITS = OUTFIT_COLORS.filter((c) => !PINKS.includes(c));
+
 export function randomLook(rng, gender) {
   const male = gender === 'm';
-  let hairStyle;
-  do {
-    hairStyle = rng.pick(HAIR_STYLES);
-  } while (hairStyle === 'bald' && !male && !rng.chance(0.1));
-  if (male && hairStyle === 'bald' && rng.chance(0.4)) hairStyle = rng.pick(HAIR_STYLES);
-  let accessory = rng.pick(ACCESSORIES);
-  if (!male && (accessory === 'beard' || accessory === 'mustache')) accessory = rng.chance(0.5) ? null : 'glasses';
   return {
     skin: rng.pick(SKIN_TONES),
     hair: rng.pick(HAIR_COLORS),
-    outfit: rng.pick(OUTFIT_COLORS),
-    hairStyle,
-    accessory,
+    outfit: rng.pick(male ? MALE_OUTFITS : OUTFIT_COLORS),
+    hairStyle: rng.pick(male ? MALE_HAIR : FEMALE_HAIR),
+    accessory: rng.pick(male ? MALE_ACC : FEMALE_ACC),
   };
 }
 

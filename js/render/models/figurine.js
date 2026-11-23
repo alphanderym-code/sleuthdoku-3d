@@ -61,14 +61,21 @@ function capGeo(theta, r) {
  */
 export function createFigurine(character, weapon) {
   const ch = character || {};
-  const look = ch.look || {};
   const victim = !!ch.victim;
+  const seed = hashStr(String(ch.id || ch.name || '?') + (ch.name || ''));
+  const male = ch.gender === 'm', female = ch.gender === 'f';
+  // Normalize the look so it always matches gender (hand-authored cases included); source data is untouched.
+  const look = { ...(ch.look || {}) };
+  if (male) {
+    if (look.hairStyle === 'long' || look.hairStyle === 'bun' || look.hairStyle === 'ponytail') look.hairStyle = ['short', 'slick', 'spiky', 'curly'][seed % 4];
+    if (look.accessory === 'scarf') look.accessory = null;
+  }
+  if (female && (look.accessory === 'beard' || look.accessory === 'mustache')) look.accessory = null;
   const tint = (hex, fallback) => { const v = hex || fallback; return victim ? paleColor(v) : v; };
   const skin = tint(look.skin, '#f1c27d');
   const hair = tint(look.hair, '#3b2a1a');
   const outfit = tint(look.outfit, '#4f86c6');
   const letter = String(ch.id || '?').slice(0, 1).toUpperCase();
-  const seed = hashStr(String(ch.id || ch.name || '?') + (ch.name || ''));
   const r = rng(seed);
   const variant = seed % 4;
   const accent = contrastAccent(outfit);
@@ -98,7 +105,8 @@ export function createFigurine(character, weapon) {
   }
 
   // ---- Torso (pear-shaped lathe) inside a group so it can "breathe"
-  const torsoG = new THREE.Group(); torsoG.position.y = TY0; g.add(torsoG);
+  const torsoG = new THREE.Group(); torsoG.position.y = TY0;
+  const torsoW = new THREE.Group(); torsoW.scale.x = male ? 1.1 : 1; torsoW.add(torsoG); g.add(torsoW); // broader chest for men
   const ly = (y) => y - TY0;
   const prof = TORSO.map(([rr, yy]) => new THREE.Vector2(rr, ly(yy)));
   add(torsoG, new THREE.LatheGeometry(prof, 24), mOutfit);
@@ -150,7 +158,7 @@ export function createFigurine(character, weapon) {
   // ---- Arms with sleeves, cuffs and hands
   const arms = [];
   for (const sx of [-1, 1]) {
-    const ag = new THREE.Group(); ag.position.set(sx * 0.185, 0.4, 0.01); ag.rotation.z = sx * 0.55; g.add(ag);
+    const ag = new THREE.Group(); ag.position.set(sx * (male ? 0.2 : 0.185), 0.4, 0.01); ag.rotation.z = sx * 0.55; g.add(ag);
     add(ag, CAPS(0.05, 0.1, 4, 8), mOutfit, { pos: [0, -0.07, 0] });
     add(ag, TOR(0.05, 0.012, 6, 12), mOutDark, { pos: [0, -0.155, 0], rot: [Math.PI / 2, 0, 0], ...T });
     add(ag, SPH(0.047, 10, 8), mSkin, { pos: [0, -0.2, 0.01], noOutline: true });
@@ -162,7 +170,8 @@ export function createFigurine(character, weapon) {
   add(head, SPH(HEAD_R, 28, 20), mSkin);
   for (const sx of [-1, 1]) add(head, SPH(0.045, 8, 6), mSkin, { pos: [sx * 0.222, -0.005, -0.005], scale: [0.5, 1, 0.8], ...T });
 
-  const mBrow = mat(shade(hair, 0.6)), mNose = mat(mix(skin, '#e08a7a', 0.35)), mCheek = mat(mix(skin, '#ff7b8a', 0.5));
+  const mBrow = mat(shade(hair, 0.6)), mNose = mat(mix(skin, '#e08a7a', 0.35)), mCheek = mat(mix(skin, '#ff7b8a', male ? 0.1 : 0.62));
+  const mLash = mat('#1d1a26');
   const eyes = [];
   const eyeY = 0.025, eyeX = 0.088;
   for (const sx of [-1, 1]) {
@@ -173,16 +182,29 @@ export function createFigurine(character, weapon) {
     add(eg, SPH(0.006, 6, 5), mWhite, { pos: [-0.012, -0.014, 0.03], ...T });
     void pupil;
     eyes.push(eg);
-    // eyebrow
-    const br = add(head, CAPS(0.009, 0.05, 2, 6), mBrow, { ...T });
-    onHead(br, sx * 0.09, 0.108, 0.006); br.rotation.z = Math.PI / 2 + sx * (0.12 + (seed % 3) * 0.06) * -1;
-    // cheeks
-    const ck = add(head, SPH(0.035, 8, 6), mCheek, { scale: [1, 0.62, 0.35], ...T });
+    if (female) { // eyelashes: three small strokes fanned at the outer upper corner
+      for (const a of [0.2, 0.62, 1.04]) {
+        const dx = sx * Math.cos(a), dy = Math.sin(a);
+        const l = add(eg, CAPS(0.0045, 0.022, 2, 4), mLash, { ...T });
+        l.position.set(dx * 0.07, dy * 0.08, 0.014);
+        l.rotation.z = -Math.atan2(dx, dy);
+      }
+    }
+    // eyebrow: men thicker and straighter, women thin and slightly arched
+    const br = add(head, male ? CAPS(0.014, 0.056, 2, 6) : CAPS(0.008, 0.05, 2, 6), mBrow, { ...T });
+    onHead(br, sx * 0.09, male ? 0.104 : 0.108, 0.006);
+    br.rotation.z = Math.PI / 2 + sx * (male ? 0.03 + (seed % 3) * 0.03 : 0.12 + (seed % 3) * 0.06) * -1;
+    // cheeks (faint on men)
+    const ck = add(head, SPH(0.035, 8, 6), mCheek, { scale: male ? [0.8, 0.5, 0.3] : [1.12, 0.7, 0.35], ...T });
     onHead(ck, sx * 0.145, -0.05, -0.004);
   }
   const nose = add(head, SPH(0.028, 10, 8), mNose, { ...T });
   nose.position.set(0, -0.022, headZ(0, -0.022) + 0.008);
   const hasBeard = look.accessory === 'beard';
+  if (male && !hasBeard && look.accessory !== 'mustache' && seed % 3 === 1) { // light stubble / jaw shading below the mouth
+    add(head, new THREE.SphereGeometry(HEAD_R + 0.003, 20, 8, Math.PI / 2 - 1.2, 2.4, 2.06, 0.75), mat(mix(skin, hair, 0.28)), { ...T });
+  }
+  const mLip = female ? mat(mix(skin, '#d6455d', 0.7)) : mDark;
   const mouthR = HEAD_R + (hasBeard ? 0.014 : 0);
   if (seed % 3 === 0) { // open smile
     const m = add(head, new THREE.CircleGeometry(0.04, 14, Math.PI, Math.PI), mat('#7a2e3a'), { ...T });
@@ -190,12 +212,12 @@ export function createFigurine(character, weapon) {
     const tg = add(head, SPH(0.02, 8, 6), mat('#ff8a9a'), { scale: [1, 0.55, 0.3], ...T });
     onHead(tg, 0, -0.098, 0.004, mouthR);
   } else {
-    const m = add(head, TOR(0.036, 0.009, 4, 12, Math.PI), mDark, { ...T });
+    const m = add(head, TOR(0.036, 0.009, 4, 12, Math.PI), mLip, { ...T });
     onHead(m, 0, -0.07, 0.003, mouthR); m.rotation.z = Math.PI;
   }
 
-  buildHair(head, look.hairStyle || 'short', mHair, look.accessory === 'hat', mAcc, r);
-  buildHeadAccessory(head, look.accessory || null, { mHair, mDark, mat, mAcc, mGold, outfit, mOutfit, mOutDark });
+  buildHair(head, look.hairStyle || 'short', mHair, look.accessory === 'hat', mAcc, r, male);
+  buildHeadAccessory(head, look.accessory || null, { mHair, mDark, mat, mAcc, mGold, outfit, mOutfit, mOutDark, male, seed });
   // neck accessories live on the torso
   buildNeckAccessory(g, look.accessory || null, { mAcc, mat, accent, outfit });
 
@@ -234,14 +256,14 @@ export function createFigurine(character, weapon) {
 
 function BOXs(w, h, d) { return RB(w, h, d, Math.min(w, h, d) * 0.3, 1); }
 
-function buildHair(head, style, mHair, hasHat, mAcc, r) {
+function buildHair(head, style, mHair, hasHat, mAcc, r, male = false) {
   const R = HEAD_R + 0.012;
   const cap = (theta, tilt = -0.5, rr = R) => add(head, capGeo(theta, rr), mHair, { rot: [tilt, 0, 0] });
   const ball = (x, y, z, s, sc = [1, 1, 1]) => ({ geo: SPH(s, 10, 8), pos: [x, y, z], scale: sc });
   switch (style) {
     case 'bald': {
       addMerged(head, [ball(-0.2, 0.05, -0.04, 0.05, [0.6, 1.2, 1.2]), ball(0.2, 0.05, -0.04, 0.05, [0.6, 1.2, 1.2]), ball(-0.19, 0.09, 0.0, 0.04, [0.6, 1, 1]), ball(0.19, 0.09, 0.0, 0.04, [0.6, 1, 1])], mHair);
-      if (!hasHat) {
+      if (!hasHat && !male) {
         add(head, TOR(0.025, 0.007, 4, 10, Math.PI * 1.5), mHair, { pos: [0.0, 0.215, 0.025], rot: [-Math.PI / 2 + 0.2, 0, 0.5], ...T });
         add(head, CONE(0.012, 0.04, 5), mHair, { pos: [0.0, 0.24, 0.025], ...T });
       }
@@ -278,12 +300,20 @@ function buildHair(head, style, mHair, hasHat, mAcc, r) {
           parts.push({ geo: SPH(rad, 10, 8), pos: [x * sp * 0.225, cp * 0.225 + 0.005, z * sp * 0.225 - 0.01] });
         }
       };
-      if (!hasHat) ring(0.0, 1, 0.085, false);
-      if (!hasHat) ring(0.55, 6, 0.08, false);
-      ring(1.0, 8, 0.075, true);
-      ring(1.35, 9, 0.065, true);
-      // fringe curls
-      parts.push({ geo: SPH(0.06, 10, 8), pos: [-0.09, 0.155, 0.15] }, { geo: SPH(0.06, 10, 8), pos: [0.0, 0.17, 0.155] }, { geo: SPH(0.06, 10, 8), pos: [0.09, 0.155, 0.15] });
+      if (male) { // short tight curls hugging the skull
+        if (!hasHat) ring(0.0, 1, 0.05, false);
+        if (!hasHat) ring(0.55, 7, 0.048, false);
+        ring(1.0, 10, 0.046, true);
+        ring(1.3, 11, 0.042, true);
+        parts.push({ geo: SPH(0.04, 8, 6), pos: [-0.08, 0.165, 0.14] }, { geo: SPH(0.04, 8, 6), pos: [0.0, 0.178, 0.145] }, { geo: SPH(0.04, 8, 6), pos: [0.08, 0.165, 0.14] });
+      } else {
+        if (!hasHat) ring(0.0, 1, 0.085, false);
+        if (!hasHat) ring(0.55, 6, 0.08, false);
+        ring(1.0, 8, 0.075, true);
+        ring(1.35, 9, 0.065, true);
+        // fringe curls
+        parts.push({ geo: SPH(0.06, 10, 8), pos: [-0.09, 0.155, 0.15] }, { geo: SPH(0.06, 10, 8), pos: [0.0, 0.17, 0.155] }, { geo: SPH(0.06, 10, 8), pos: [0.09, 0.155, 0.15] });
+      }
       addMerged(head, parts, mHair);
       break;
     }
@@ -313,20 +343,39 @@ function buildHair(head, style, mHair, hasHat, mAcc, r) {
       addMerged(head, parts, mHair);
       break;
     }
+    case 'slick': { // short side-part, swept sideways
+      cap(1.58, -0.52);
+      const fr = [[-0.12, 0.15, 0.14, -0.15], [-0.04, 0.165, 0.145, -0.1], [0.04, 0.175, 0.14, -0.05], [0.12, 0.165, 0.12, 0.0]];
+      addMerged(head, fr.map(([x, y, z, rz]) => ({ geo: SPH(0.06, 10, 8), pos: [x, y, z], scale: [1.5, 0.55, 0.8], rot: [0, 0, rz] })), mHair);
+      break;
+    }
     default: { // short
       cap(1.58, -0.52);
       const fr = [[-0.1, 0.17, 0.125, -0.25], [-0.02, 0.185, 0.135, 0], [0.07, 0.178, 0.13, 0.2], [0.14, 0.15, 0.1, 0.5]];
       addMerged(head, fr.map(([x, y, z, rz]) => ({ geo: SPH(0.065, 10, 8), pos: [x, y, z], scale: [1.3, 0.8, 0.8], rot: [0, 0, rz] })), mHair);
-      if (!hasHat) add(head, CONE(0.035, 0.09, 6), mHair, { pos: [0.02, 0.225, 0.02], rot: [0.2, 0, -0.35], ...T });
+      if (!hasHat && !male) add(head, CONE(0.035, 0.09, 6), mHair, { pos: [0.02, 0.225, 0.02], rot: [0.2, 0, -0.35], ...T });
     }
   }
 }
 
-function buildHeadAccessory(head, kind, { mHair, mDark, mat, mAcc, mGold, outfit }) {
+function buildHeadAccessory(head, kind, { mHair, mDark, mat, mAcc, mGold, outfit, male = false, seed = 0 }) {
   switch (kind) {
     case 'hat': {
       const hg = new THREE.Group(); hg.position.set(0, 0.0, 0); hg.rotation.set(-0.06, 0, 0.05); head.add(hg);
       const mHat = mat(shade(outfit, 0.85));
+      if (male && seed % 2 === 0) { // baseball cap: dome, front visor, button
+        add(hg, new THREE.SphereGeometry(0.245, 24, 14, 0, Math.PI * 2, 0, 1.1), mHat, { rot: [-0.05, 0, 0] });
+        add(hg, new THREE.CylinderGeometry(0.2, 0.2, 0.02, 20, 1, false, -Math.PI / 2, Math.PI), mat(shade(outfit, 0.65)), { pos: [0, 0.105, 0.1], rot: [0.14, 0, 0] });
+        add(hg, SPH(0.02, 8, 6), mAcc, { pos: [0, 0.245, 0], ...T });
+        break;
+      }
+      if (male) { // fedora: narrower brim, taller crown, hat band
+        add(hg, CYL(0.27, 0.27, 0.018, 28), mHat, { pos: [0, 0.125, 0] });
+        add(hg, CYL(0.165, 0.19, 0.17, 24), mHat, { pos: [0, 0.21, 0] });
+        add(hg, CYL(0.15, 0.15, 0.012, 24), mat(shade(outfit, 0.6)), { pos: [0, 0.297, 0], ...T });
+        add(hg, CYL(0.192, 0.196, 0.04, 24), mAcc, { pos: [0, 0.157, 0], noOutline: true });
+        break;
+      }
       add(hg, CYL(0.3, 0.3, 0.022, 28), mHat, { pos: [0, 0.135, 0] });
       add(hg, CYL(0.17, 0.2, 0.16, 24), mHat, { pos: [0, 0.21, 0] });
       add(hg, CYL(0.165, 0.165, 0.012, 24), mat(shade(outfit, 1.2)), { pos: [0, 0.294, 0], ...T });

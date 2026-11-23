@@ -19,7 +19,7 @@ function test(name, fn) {
   catch (e) { failed++; console.log(`  FAIL ${name}\n       ${e.stack.split('\n').slice(0, 3).join('\n       ')}`); }
 }
 
-const HAIR = ['short', 'long', 'bun', 'bald', 'curly', 'ponytail', 'spiky'];
+const HAIR = ['short', 'long', 'bun', 'bald', 'curly', 'ponytail', 'spiky', 'slick'];
 const ACC = [null, 'hat', 'glasses', 'beard', 'mustache', 'bowtie', 'scarf'];
 
 function validate(p, { requireLogic = true } = {}) {

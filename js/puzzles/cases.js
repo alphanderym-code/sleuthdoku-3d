@@ -131,14 +131,14 @@ export const CASES = [
       },
       {
         id: 'C', name: 'Chen', gender: 'm', victim: false,
-        look: { skin: '#6b4226', hair: '#3fa7d6', outfit: '#ef476f', hairStyle: 'bun', accessory: 'bowtie' },
+        look: { skin: '#6b4226', hair: '#3fa7d6', outfit: '#e63946', hairStyle: 'slick', accessory: 'bowtie' },
         clues: [
           { type: 'onObject', object: 'sofa' },
         ],
       },
       {
         id: 'D', name: 'Dev', gender: 'm', victim: false,
-        look: { skin: '#c68642', hair: '#7a4a21', outfit: '#e63946', hairStyle: 'long', accessory: 'mustache' },
+        look: { skin: '#c68642', hair: '#7a4a21', outfit: '#e63946', hairStyle: 'spiky', accessory: 'mustache' },
         clues: [
           { type: 'aloneInRoom', room: 'O' },
         ],
@@ -196,14 +196,14 @@ export const CASES = [
     characters: [
       {
         id: 'A', name: 'Amir', gender: 'm', victim: false,
-        look: { skin: '#f1c27d', hair: '#e8e8e8', outfit: '#f4a261', hairStyle: 'short', accessory: 'scarf' },
+        look: { skin: '#f1c27d', hair: '#e8e8e8', outfit: '#f4a261', hairStyle: 'short', accessory: null },
         clues: [
           { type: 'dir', dir: 'northeast', of: 'C' },
         ],
       },
       {
         id: 'B', name: 'Ben', gender: 'm', victim: false,
-        look: { skin: '#e0ac69', hair: '#d9a441', outfit: '#ef476f', hairStyle: 'short', accessory: 'scarf' },
+        look: { skin: '#e0ac69', hair: '#d9a441', outfit: '#e63946', hairStyle: 'short', accessory: null },
         clues: [
           { type: 'aloneInRoom', room: 'G' },
         ],
@@ -231,7 +231,7 @@ export const CASES = [
       },
       {
         id: 'V', name: 'Viktor', gender: 'm', victim: true,
-        look: { skin: '#e0ac69', hair: '#c451c4', outfit: '#00b4d8', hairStyle: 'ponytail', accessory: 'mustache' },
+        look: { skin: '#e0ac69', hair: '#c451c4', outfit: '#00b4d8', hairStyle: 'spiky', accessory: 'mustache' },
         clues: [
           { type: 'victim' },
         ],
@@ -296,7 +296,7 @@ export const CASES = [
       },
       {
         id: 'C', name: 'Chen', gender: 'm', victim: false,
-        look: { skin: '#e0ac69', hair: '#111111', outfit: '#ff7b00', hairStyle: 'ponytail', accessory: null },
+        look: { skin: '#e0ac69', hair: '#111111', outfit: '#ff7b00', hairStyle: 'curly', accessory: null },
         clues: [
           { type: 'besideObject', object: 'boulder' },
         ],
@@ -310,7 +310,7 @@ export const CASES = [
       },
       {
         id: 'E', name: 'Emeka', gender: 'm', victim: false,
-        look: { skin: '#8d5524', hair: '#9a9a9a', outfit: '#ef476f', hairStyle: 'short', accessory: 'mustache' },
+        look: { skin: '#8d5524', hair: '#9a9a9a', outfit: '#e63946', hairStyle: 'short', accessory: 'mustache' },
         clues: [
           { type: 'onObject', object: 'bench' },
         ],
@@ -387,7 +387,7 @@ export const CASES = [
       },
       {
         id: 'C', name: 'Carlos', gender: 'm', victim: false,
-        look: { skin: '#6b4226', hair: '#2b1b10', outfit: '#118ab2', hairStyle: 'ponytail', accessory: 'hat' },
+        look: { skin: '#6b4226', hair: '#2b1b10', outfit: '#118ab2', hairStyle: 'spiky', accessory: 'hat' },
         clues: [
           { type: 'dir', dir: 'east', of: 'D', dist: 2 },
         ],
@@ -477,7 +477,7 @@ export const CASES = [
       },
       {
         id: 'B', name: 'Boris', gender: 'm', victim: false,
-        look: { skin: '#a0693f', hair: '#111111', outfit: '#2ec4b6', hairStyle: 'spiky', accessory: 'scarf' },
+        look: { skin: '#a0693f', hair: '#111111', outfit: '#2ec4b6', hairStyle: 'spiky', accessory: null },
         clues: [
           { type: 'dir', dir: 'northwest', of: 'F' },
         ],
@@ -572,7 +572,7 @@ export const CASES = [
     characters: [
       {
         id: 'A', name: 'Amir', gender: 'm', victim: false,
-        look: { skin: '#ffdfc4', hair: '#c451c4', outfit: '#ff6fb5', hairStyle: 'spiky', accessory: 'glasses' },
+        look: { skin: '#ffdfc4', hair: '#c451c4', outfit: '#3a86ff', hairStyle: 'spiky', accessory: 'glasses' },
         clues: [
           { type: 'columnOneOf', indices: [3, 4] },
           { type: 'onObject', object: 'chair' },
@@ -587,7 +587,7 @@ export const CASES = [
       },
       {
         id: 'C', name: 'Chen', gender: 'm', victim: false,
-        look: { skin: '#6b4226', hair: '#c451c4', outfit: '#00b4d8', hairStyle: 'long', accessory: 'mustache' },
+        look: { skin: '#6b4226', hair: '#c451c4', outfit: '#00b4d8', hairStyle: 'curly', accessory: 'mustache' },
         clues: [
           { type: 'rowOneOf', indices: [1, 2] },
           { type: 'dir', dir: 'east', of: 'A' },
@@ -595,7 +595,7 @@ export const CASES = [
       },
       {
         id: 'D', name: 'Dev', gender: 'm', victim: false,
-        look: { skin: '#e0ac69', hair: '#d9a441', outfit: '#9ef01a', hairStyle: 'ponytail', accessory: 'scarf' },
+        look: { skin: '#e0ac69', hair: '#d9a441', outfit: '#9ef01a', hairStyle: 'short', accessory: null },
         clues: [
           { type: 'diagonal', with: 'E' },
         ],
@@ -691,14 +691,14 @@ export const CASES = [
       },
       {
         id: 'C', name: 'Chen', gender: 'm', victim: false,
-        look: { skin: '#f1c27d', hair: '#f2d680', outfit: '#ef476f', hairStyle: 'ponytail', accessory: 'scarf' },
+        look: { skin: '#f1c27d', hair: '#f2d680', outfit: '#e63946', hairStyle: 'slick', accessory: null },
         clues: [
           { type: 'dir', dir: 'north', of: 'A', dist: 2 },
         ],
       },
       {
         id: 'D', name: 'Dev', gender: 'm', victim: false,
-        look: { skin: '#f1c27d', hair: '#9a9a9a', outfit: '#00b4d8', hairStyle: 'ponytail', accessory: 'bowtie' },
+        look: { skin: '#f1c27d', hair: '#9a9a9a', outfit: '#00b4d8', hairStyle: 'spiky', accessory: 'bowtie' },
         clues: [
           { type: 'onObject', object: 'car' },
         ],
@@ -713,7 +713,7 @@ export const CASES = [
       },
       {
         id: 'F', name: 'Felix', gender: 'm', victim: false,
-        look: { skin: '#c68642', hair: '#b5371f', outfit: '#8338ec', hairStyle: 'long', accessory: 'glasses' },
+        look: { skin: '#c68642', hair: '#b5371f', outfit: '#8338ec', hairStyle: 'curly', accessory: 'glasses' },
         clues: [
           { type: 'besideObject', object: 'tv' },
         ],
@@ -822,7 +822,7 @@ export const CASES = [
       },
       {
         id: 'F', name: 'Felix', gender: 'm', victim: false,
-        look: { skin: '#f1c27d', hair: '#2b1b10', outfit: '#b5179e', hairStyle: 'long', accessory: 'beard' },
+        look: { skin: '#f1c27d', hair: '#2b1b10', outfit: '#8338ec', hairStyle: 'short', accessory: 'beard' },
         clues: [
           { type: 'dir', dir: 'southwest', of: 'A' },
           { type: 'dir', dir: 'west', of: 'E', otherRoom: true },
@@ -830,7 +830,7 @@ export const CASES = [
       },
       {
         id: 'G', name: 'Gustavo', gender: 'm', victim: false,
-        look: { skin: '#c68642', hair: '#111111', outfit: '#e63946', hairStyle: 'ponytail', accessory: 'hat' },
+        look: { skin: '#c68642', hair: '#111111', outfit: '#e63946', hairStyle: 'slick', accessory: 'hat' },
         clues: [
           { type: 'columnOneOf', indices: [3, 4] },
           { type: 'rowOneOf', indices: [1, 2] },
@@ -907,7 +907,7 @@ export const CASES = [
     characters: [
       {
         id: 'A', name: 'Amir', gender: 'm', victim: false,
-        look: { skin: '#a0693f', hair: '#d9a441', outfit: '#ff7b00', hairStyle: 'ponytail', accessory: 'scarf' },
+        look: { skin: '#a0693f', hair: '#d9a441', outfit: '#ff7b00', hairStyle: 'spiky', accessory: null },
         clues: [
           { type: 'column', index: 7 },
         ],
@@ -1047,7 +1047,7 @@ export const CASES = [
       },
       {
         id: 'C', name: 'Carlos', gender: 'm', victim: false,
-        look: { skin: '#c68642', hair: '#b5371f', outfit: '#118ab2', hairStyle: 'ponytail', accessory: 'bowtie' },
+        look: { skin: '#c68642', hair: '#b5371f', outfit: '#118ab2', hairStyle: 'curly', accessory: 'bowtie' },
         clues: [
           { type: 'corner' },
         ],

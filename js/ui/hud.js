@@ -161,8 +161,7 @@ export class Hud {
       const wi = weaponInfo(ch.weapon);
       const weapon = wi ? `<span class="weapon" title="Carries: ${esc(wi.label)}">${wi.emoji} ${esc(wi.label)}</span>` : '';
       el.innerHTML = `<img alt="" ${src ? `src="${src}"` : ''}>
-        <div><div class="nm"><span class="letter">${esc(ch.id)}</span>${esc(ch.name)}${weapon}</div><ul class="clues">${clues}</ul></div>
-        <span class="placed"></span>`;
+        <div><div class="nm"><span class="letter">${esc(ch.id)}</span>${esc(ch.name)}${weapon}<span class="placed"></span></div><ul class="clues">${clues}</ul></div>`;
       el.title = `${ch.name} (${idx + 1})`;
       const pick = () => this.onAction('select', ch.id);
       el.addEventListener('click', pick);
