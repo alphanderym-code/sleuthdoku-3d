@@ -82,6 +82,7 @@
           <button class="btn tool btn-primary" data-action="submit" id="btn-submit" title="Submit your accusation" disabled><span class="ico">&#128373;&#65039;</span><span class="t">Submit</span></button>
         </div>
         <div class="tool-group">
+          <button class="btn tool" id="btn-objects" title="What are these objects?"><span class="ico">&#129681;</span><span class="t">Objects</span></button>
           <button class="btn tool" data-action="help" title="How to play"><span class="ico">?</span><span class="t">Help</span></button>
           <button class="btn tool" data-action="mute" title="Mute"><span class="ico mute-ico">&#128266;</span><span class="t mute-label">Sound</span></button>
           <button class="btn tool" data-action="resetcam" title="Reset camera"><span class="ico">&#127909;</span><span class="t">Camera</span></button>
@@ -116,6 +117,14 @@
           <dt>first ... last</dt><dd>row or column number counted from the north or west.</dd>
         </dl>
       </div>
+      <div class="modal-actions"><button class="btn btn-primary" data-close>Got it!</button></div>
+    </div>
+  </div>
+
+  <div id="modal-objects" class="modal" hidden>
+    <div class="modal-card">
+      <h2>Objects in this scene</h2>
+      <div class="modal-body"><ul id="objects-list" class="obj-list"></ul></div>
       <div class="modal-actions"><button class="btn btn-primary" data-close>Got it!</button></div>
     </div>
   </div>

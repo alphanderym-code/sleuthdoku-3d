@@ -650,6 +650,8 @@ void main(){
 }`;
 
 const keyOf = (r, c) => `${r},${c}`;
+// Object `facing` -> rotation.y (model front = local +z; board row r = world +z, column c = world +x).
+const FACING_ROT = { s: 0, e: Math.PI / 2, n: Math.PI, w: -Math.PI / 2 };
 function parseCell(v) {
   if (v == null) return null;
   if (typeof v === 'string') { const [r, c] = v.split(',').map(Number); return Number.isFinite(r) && Number.isFinite(c) ? { r, c } : null; }
@@ -944,6 +946,7 @@ export class BoardView {
     this._buildFloors(board, roomAt, floorOf);
     this._buildWalls(board, roomAt);
     this._buildFrame(board);
+    this._buildCoordLabels(board);
 
     // Objects (+ soft contact shadows)
     const p = new THREE.Vector3();
@@ -956,6 +959,7 @@ export class BoardView {
       const rr = prng((o.r * 31 + o.c * 17 + 5) * 7919);
       if (['tree', 'bush', 'boulder', 'campfire'].includes(o.type)) g.rotation.y = rr() * Math.PI * 2;
       else if (o.type === 'crate') g.rotation.y = (rr() - 0.5) * 0.4;
+      else if (o.facing) g.rotation.y = FACING_ROT[o.facing] ?? 0; // model front is +z; world x=c, z=r
       board.add(g);
       const box = new THREE.Box3().setFromObject(g);
       const size = box.getSize(new THREE.Vector3());
@@ -1174,6 +1178,35 @@ export class BoardView {
     ground.position.set(0.25, bottom + 0.02 - pd - 2 * pb - 0.02, 0.35);
     ground.raycast = noRaycast;
     board.add(ground);
+  }
+
+  /** Chess-style coordinates on the frame: letters a.. for columns (bottom + top), numbers 1.. for rows (left + right); row 1 is the north (far) row. */
+  _buildCoordLabels(board) {
+    const N = this.N, half = N / 2, off = half + FRAME_W / 2, y = FRAME_TOP + 0.06;
+    const group = new THREE.Group(); group.name = 'coords';
+    const cache = new Map();
+    const labelMat = (txt) => {
+      if (!cache.has(txt)) {
+        const cv = makeCanvas(64, 64), g = cv.getContext('2d');
+        g.font = `bold 44px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.lineWidth = 8; g.strokeStyle = 'rgba(40,24,12,0.9)'; g.strokeText(txt, 32, 34);
+        g.fillStyle = '#f6e7c1'; g.fillText(txt, 32, 34);
+        cache.set(txt, new THREE.SpriteMaterial({ map: canvasTexture(cv), transparent: true, depthWrite: false, toneMapped: false }));
+      }
+      return cache.get(txt);
+    };
+    const add = (txt, x, z) => {
+      const s = new THREE.Sprite(labelMat(txt));
+      s.scale.set(0.3, 0.3, 1); s.position.set(x, y, z); s.raycast = noRaycast; s.renderOrder = 5;
+      group.add(s);
+    };
+    for (let i = 0; i < N; i++) {
+      const pos = i - (N - 1) / 2;
+      const letter = String.fromCharCode(97 + i), num = String(i + 1);
+      add(letter, pos, off); add(letter, pos, -off);
+      add(num, -off, pos); add(num, off, pos);
+    }
+    board.add(group);
   }
 
   /** Instanced grass tufts / flowers / pebbles / shells / snow lumps along cell edges on outdoor floors. */

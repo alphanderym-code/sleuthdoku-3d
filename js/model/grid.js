@@ -71,3 +71,8 @@ export function neighbors(puzzle, r, c) {
 export function cellKey(r, c) {
   return `${r},${c}`;
 }
+
+/** Chess-style cell name: column letter + 1-based row number, e.g. (r=1,c=2) -> "c2". Supports up to 16 columns (a-p). */
+export function cellName(r, c) {
+  return `${String.fromCharCode(97 + c)}${r + 1}`;
+}

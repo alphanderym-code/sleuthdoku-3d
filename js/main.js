@@ -225,6 +225,8 @@ function wireBoard() {
   }
   board.on('cellHold', ({ r, c }) => {
     if (!state || state.solved) return;
+    // Eraser is independent of the selected suspect: a long press erases too.
+    if (state.tool === 'erase') { if (state.eraseCell(r, c)) sfx.remove(); return; }
     if (needSelection()) return;
     const id = state.selected;
     const here = state.placements[id];

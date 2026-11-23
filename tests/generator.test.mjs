@@ -11,6 +11,7 @@ import { SAMPLE_PUZZLE } from '../js/puzzles/sample.js';
 import { buildLayout, WALL_TYPES, SEAT_ANCHORS } from '../js/model/generator.js';
 import { SCENES } from '../js/data/content.js';
 import { makeRng } from '../js/model/rng.js';
+import { assignFacing, FRONTED_TYPES, FACING_DIRS } from '../js/model/facing.js';
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -361,6 +362,73 @@ test('clue text reads naturally for new object types', () => {
   assert.match(t({ type: 'onObject', object: 'car' }), /in a car.?$/);
   assert.match(t({ type: 'onObject', object: 'bathtub' }), /in a bathtub.?$/);
   assert.match(t({ type: 'withSomeoneBeside', object: 'water' }), /beside the water.?$/);
+});
+
+test('layout: no same-type cluster > 2 (except natural clumps), sane per-room counts', () => {
+  const OK = new Set(['water', 'flowers', 'haybale', 'tree', 'bush', 'rug', 'boat']);
+  let n = 0;
+  for (const scene of SCENES) for (let N = 5; N <= 9; N++) for (let seed = 1; seed <= 12; seed++) {
+    const lay = buildLayout(makeRng(seed * 977 + N), N, scene);
+    if (!lay) continue;
+    n++;
+    const at = new Map(lay.objects.map((o) => [o.r * N + o.c, o.type]));
+    const seen = new Set();
+    for (const o of lay.objects) {
+      if (OK.has(o.type) || seen.has(o.r * N + o.c)) continue;
+      const comp = [o.r * N + o.c]; seen.add(comp[0]);
+      for (let q = 0; q < comp.length; q++) {
+        const r = Math.floor(comp[q] / N), c = comp[q] % N;
+        for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const k = (r + dr) * N + c + dc;
+          if (r + dr >= 0 && r + dr < N && c + dc >= 0 && c + dc < N && at.get(k) === o.type && !seen.has(k)) { seen.add(k); comp.push(k); }
+        }
+      }
+      assert.ok(comp.length <= 2, `${scene.key} N=${N} seed=${seed}: ${comp.length} ${o.type} connected`);
+    }
+    const per = {};
+    for (const o of lay.objects) {
+      if (OK.has(o.type)) continue;
+      const k = lay.rooms[o.r][o.c];
+      per[k + o.type] = (per[k + o.type] || 0) + 1;
+    }
+    for (const [key, cnt] of Object.entries(per)) {
+      const size = lay.rooms.join('').split(key[0]).length - 1;
+      assert.ok(cnt <= Math.max(2, Math.ceil(size * 0.35)), `${scene.key} N=${N}: ${cnt} x ${key.slice(1)} in room of ${size}`);
+    }
+  }
+  assert.ok(n > 200, 'enough layouts sampled');
+});
+
+test('facing: fronted objects never face a wall/edge when an alternative exists; chairs face adjacent table', () => {
+  const check = (p, label) => {
+    const N = p.size, at = new Map(p.objects.map((o) => [o.r * N + o.c, o]));
+    const roomOf = (r, c) => (r >= 0 && c >= 0 && r < N && c < N ? p.rooms[r][c] : null);
+    for (const o of p.objects) {
+      if (!FRONTED_TYPES.has(o.type)) { assert.equal(o.facing, undefined, `${label}: ${o.type} has no front`); continue; }
+      assert.ok(FACING_DIRS[o.facing], `${label}: ${o.type} facing set`);
+      const here = roomOf(o.r, o.c);
+      const open = (d) => roomOf(o.r + FACING_DIRS[d][0], o.c + FACING_DIRS[d][1]) === here;
+      if (!open(o.facing)) assert.ok(!['n', 'e', 's', 'w'].some(open), `${label}: ${o.type} at ${o.r},${o.c} faces a wall though open side exists`);
+      if (o.type === 'chair') {
+        const tables = ['n', 'e', 's', 'w'].filter((d) => {
+          const q = at.get((o.r + FACING_DIRS[d][0]) * N + o.c + FACING_DIRS[d][1]);
+          return q && ['table', 'desk', 'counter'].includes(q.type) && open(d);
+        });
+        if (tables.length) assert.ok(tables.includes(o.facing), `${label}: chair at ${o.r},${o.c} faces away from adjacent table`);
+      }
+    }
+  };
+  let n = 0;
+  for (const scene of SCENES) for (let N = 5; N <= 9; N++) for (let seed = 1; seed <= 6; seed++) {
+    const lay = buildLayout(makeRng(seed * 31 + N), N, scene);
+    if (!lay) continue;
+    const p = assignFacing({ size: N, rooms: lay.rooms, objects: lay.objects.map((o) => ({ ...o })) });
+    check(p, `${scene.key} ${N} ${seed}`); n++;
+  }
+  assert.ok(n > 100);
+  for (const c of CASES) check(c, c.id);
+  check(SAMPLE_PUZZLE, 'sample');
+  for (const seed of [1, 2, 3]) check(generatePuzzle({ size: 6, difficulty: 'easy', seed }), `gen${seed}`);
 });
 
 console.log(`

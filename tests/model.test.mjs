@@ -227,7 +227,7 @@ test('wrong', () => {
   const h = getHint(P, { A: SOL.A, B: { r: 2, c: 4 } });
   assert.equal(h.kind, 'wrong');
   assert.equal(h.charId, 'B');
-  assert.equal(h.message, "Something's off with **Bruno** (B) on R3 C5. Re-read his clue.");
+  assert.equal(h.message, "Something's off with **Bruno** (B) on e3. Re-read his clue.");
 });
 test('done names the murderer', () => {
   const h = getHint(P, SOL);
@@ -243,7 +243,7 @@ test('deduce from empty board, and walking hints solves the sample', () => {
     assert.equal(h.kind, 'deduce', h.message);
     assert.deepEqual(h.cell, SOL[h.charId]);
     assert.ok(h.message.includes('**'), h.message);
-    assert.ok(h.message.includes(`R${h.cell.r + 1} C${h.cell.c + 1}`), h.message);
+    assert.ok(h.message.includes(grid.cellName(h.cell.r, h.cell.c)), h.message);
     assert.ok(h.message.includes(`(${h.charId})`), h.message);
     console.log(`       ${h.message}`);
     placed[h.charId] = h.cell;

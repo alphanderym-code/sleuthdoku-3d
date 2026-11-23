@@ -8,6 +8,7 @@ import { roomAt, objectAt, isBeside, isCorner } from './grid.js';
 import { evaluateClue, evaluateNote } from './clues.js';
 import { solve, prepare, murdererOf } from './solver.js';
 import { propagate } from './hints.js';
+import { assignFacing } from './facing.js';
 import { SCENES, pickCast, randomLook } from '../data/content.js';
 
 export const DIFFICULTIES = ['very-easy', 'easy', 'medium', 'hard'];
@@ -166,6 +167,9 @@ export const WALL_TYPES = new Set(['shelf', 'wardrobe', 'tv', 'bed', 'counter', 
 export const SEAT_ANCHORS = { chair: ['table', 'desk', 'counter'], stool: ['counter', 'table', 'desk', 'piano'] };
 const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const N8 = [...N4, [1, 1], [1, -1], [-1, 1], [-1, -1]];
+// Types that naturally come in big clumps (no cluster / per-room count limit).
+export const CLUSTER_OK = new Set(['water', 'flowers', 'haybale', 'tree', 'bush', 'rug', 'boat']);
+export const MAX_CLUSTER = 2;
 
 function makeState(N, rooms, roomSize) {
   const nb = new Array(N * N).fill(0);
@@ -192,8 +196,23 @@ function makeState(N, rooms, roomSize) {
 const cellRoom = (st, i) => st.rooms[Math.floor(i / st.N)][i % st.N];
 
 // Can `type` stand on cell i? (solvability limits apply to blocking types only.)
+// Would one more `type` on cell i keep clusters <= MAX_CLUSTER (orthogonally connected) and the per-room count sensible?
+function sameOk(st, i, type) {
+  if (CLUSTER_OK.has(type)) return true;
+  const k = cellRoom(st, i);
+  if ((st.cnt[k]?.[type] || 0) + 1 > Math.max(2, Math.ceil(st.roomSize[k] * 0.35))) return false;
+  const seen = new Set([i]), stack = [i];
+  while (stack.length) {
+    for (const j of neighbours(st, stack.pop(), N4)) {
+      if (st.occ[j] === type && !seen.has(j)) { seen.add(j); stack.push(j); }
+    }
+  }
+  return seen.size <= MAX_CLUSTER;
+}
+
 function canPut(st, i, type, wall) {
   if (st.occ[i]) return false;
+  if (!sameOk(st, i, type)) return false;
   const k = cellRoom(st, i);
   if (wall && st.nb[i] >= 4) return false;
   if (isBlockingType(type)) {
@@ -253,7 +272,11 @@ function placeItem(rng, st, key, item, remaining, sizeOverride) {
       .filter((i) => cellRoom(st, i) === key && !st.occ[i]);
     cand = rng.shuffle(cand);
     if (stype === 'stool') cand.sort((a, b) => (st.nb[a] >= 4 ? 0 : 1) - (st.nb[b] >= 4 ? 0 : 1));
-    for (let s = 0; s < n && s < cand.length; s++) { put(st, cand[s], stype); used++; }
+    let placed = 0;
+    for (let s = 0; placed < n && s < cand.length; s++) {
+      if (!sameOk(st, cand[s], stype)) continue;
+      put(st, cand[s], stype); used++; placed++;
+    }
   }
   if (item.extra && used < remaining) {
     const cand = rng.shuffle([...new Set(patch.flatMap((i) => neighbours(st, i, N4)))]
@@ -335,7 +358,9 @@ function addOccupiableAt(rng, ctx, i) {
       cands.push([item.seat[0], 1.5]);
     }
   }
-  if (!cands.length) return null;
+  const okc = cands.filter(([t]) => sameOk(st, i, t));
+  if (!okc.length) return null;
+  cands.length = 0; cands.push(...okc);
   let x = rng.next() * cands.reduce((s, [, w]) => s + w, 0), type = cands[cands.length - 1][0];
   for (const [t, w] of cands) { x -= w; if (x < 0) { type = t; break; } }
   put(st, i, type);
@@ -614,6 +639,7 @@ function attempt(rng, N, difficulty, sceneOpt, seed) {
     if (addOccupiableAt(rng, ctx, p.r * N + p.c)) haveOcc++;
   }
   objects.sort((a, b) => a.r - b.r || a.c - b.c);
+  assignFacing({ size: N, rooms, objects });
 
   // Cast: suspects A, B, C… and the victim V (last card).
   const cast = pickCast(rng, N);

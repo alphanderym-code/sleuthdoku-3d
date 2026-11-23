@@ -1,7 +1,7 @@
 // Hints. Pure ES module (Node + browser).
 import { evaluateClue, clueBody, clueOther, isUnaryClue, noteText, rowWord, ordinal } from './clues.js';
 import { prepare, consistentWith, getSolution, murdererOf } from './solver.js';
-import { objectAt, isBeside } from './grid.js';
+import { objectAt, isBeside, cellName } from './grid.js';
 
 const LOOKAHEAD_BUDGET_MS = 150;
 const possessive = (ch) => (ch.gender === 'f' ? 'her' : 'his');
@@ -249,7 +249,7 @@ function strongestClue(puzzle, ch, placements) {
 
 // ---- tutor-style messages ----
 
-export const coord = (p) => `R${p.r + 1} C${p.c + 1}`;
+export const coord = (p) => cellName(p.r, p.c);
 const who = (ch) => `**${ch.name}** (${ch.id})`;
 const charById = (puzzle, id) => puzzle.characters.find((c) => c.id === id);
 const said = (puzzle, ch, cl) => `${who(ch)} ${clueBody(cl, puzzle, ch)}.`;

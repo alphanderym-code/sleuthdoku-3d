@@ -35,8 +35,8 @@ These are REQUIRED for every generated or hand-made case.
    - `{ type: 'noEmptyRoom' }` → "There was no empty room."
    - `{ type: 'emptyRooms', count }` → "There were exactly two empty rooms."
    - `{ type: 'roomGenders', room }` → "There was a man and a woman in the Altar." (exactly 2 people, one m and one f)
-6. **Hints** read like a tutor, using coordinates `R{row+1} C{col+1}`: "There's only one square beside the boulder for (D):
-   R5 C4." / "This isolates (C) in the last free square of column 5: R3 C5." Last hint: "(V) was alone with (B): **Basil** is the murderer!"
+6. **Hints** read like a tutor, using chess-style coordinates (column letter a-p + row number, row 1 = top/north row; `cellName(r,c)`, e.g. `c2` = column c, row 2): "There's only one square beside the boulder for (D):
+   d5." / "This isolates (C) in the last free square of column 5: e3." Last hint: "(V) was alone with (B): **Basil** is the murderer!"
 7. Phrasing: rows "top row" / "bottom row" / "third row"; columns "first column" / "last column" / "fifth column".
    Occupiable objects read naturally: "sitting in a chair", "on a bed", "on a sofa", "on a rug", "on a bench", "on a beach towel".
    For outdoor scenes say "area" instead of "room" in corner clues ("in a corner of her area").
@@ -69,7 +69,9 @@ These are REQUIRED for every generated or hand-made case.
   size: 5,
   rooms: ['KKKSS','KKKSS','KOOOS','FFOOS','FFOOO'],   // N strings of N chars, one char = room key
   roomInfo: { K: { name: 'Kitchen', floor: 'tile' }, ... },  // floor ∈ FLOOR_TYPES
-  objects: [ { type: 'oven', r: 0, c: 0 }, ... ],          // type ∈ keys of OBJECT_TYPES (js/model/objects.js)
+  objects: [ { type: 'oven', r: 0, c: 0, facing: 's' }, ... ],  // type ∈ keys of OBJECT_TYPES (js/model/objects.js);
+                                                               // optional facing 'n'|'e'|'s'|'w' (n = row r-1, e = col c+1) for objects with a front
+                                                               // (see js/model/facing.js; filled by the generator / assignFacing at load for curated cases)
   characters: [
     { id: 'A', name: 'Ada', gender: 'f', victim: false,
       look: { skin: '#f1c27d', hair: '#3b2a1a', outfit: '#4f86c6', hairStyle: 'bun', accessory: 'glasses' },
@@ -180,6 +182,11 @@ piano, desk, register, arcade, heater) stand only on cells touching a room bound
 chairs/stools are always orthogonally adjacent to a table/desk/counter(/piano). Blocking objects keep >= 2 free cells per
 row/column and per room. After the solution is chosen, occupiable objects the room's recipe allows are added on solution
 cells so object clues exist (`addOccupiableAt`).
+Clustering: no more than 2 objects of one type orthogonally connected, and at most max(2, ceil(35% of room)) of one type per room;
+exempt: water, flower beds, hay bales, trees, bushes, rugs, boats. Facing (`js/model/facing.js`, `assignFacing`): objects with a front
+(fireplace, oven, tv, piano, desk, shelf, wardrobe, arcade, register, counter, heater, chair, sofa, bed, bench, tractor, car) never face a
+room wall / board edge if any side is open, prefer back to a wall; chairs face an adjacent table/desk/counter; sofas face a tv/fireplace in the
+room, else another sofa, else the room centre; benches face a nearby feature or the centre. The renderer rotates models (front = +z).
 Water: a recipe with `flood: 'water'` (Lake, Pond; floor `water`) places its boats (occupiable) first, then, after all other
 rooms, `floodRoom` fills the remaining free cells with blocking `water`, keeping >= 2 free cells per row/column and ~30% of the
 room free; a cell that cannot be flooded gets a boat. Water is exempt from the room density cap and per-type tallies. Boats

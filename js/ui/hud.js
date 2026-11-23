@@ -1,4 +1,6 @@
 // DOM/HUD layer. No game logic: emits actions through a callback.
+import { cellName } from "../model/grid.js";
+import { objectInfo } from "../model/objects.js";
 
 export function fmtTime(s) {
   s = Math.max(0, Math.floor(s));
@@ -35,6 +37,7 @@ export class Hud {
       btn.addEventListener('click', () => onAction('tool', btn.dataset.tool));
     });
     this._wireEraser($('btn-erase'));
+    $('btn-objects')?.addEventListener('click', () => this.openModal('modal-objects'));
   }
 
   _wireEraser(btn) {
@@ -101,8 +104,18 @@ export class Hud {
     m.textContent = msg || '';
   }
 
+  // Legend of object types present in the puzzle (label, desc, can-stand tag).
+  buildObjectsLegend(puzzle) {
+    const ul = $('objects-list');
+    if (!ul) return;
+    const types = [...new Set((puzzle.objects || []).map(o => o.type))].map(objectInfo);
+    types.sort((a, b) => (a.blocking - b.blocking) || a.label.localeCompare(b.label));
+    ul.innerHTML = types.map(i => `<li><span class="ol-name">${esc(i.label)}</span><span class="ol-desc">${esc(i.desc)}</span><span class="ol-tag ${i.blocking ? 'no' : 'ok'}">${i.blocking ? 'Blocked' : 'Can stand here'}</span></li>`).join('');
+  }
+
   // ---------- game ----------
   buildGame(puzzle, { portrait, clueText, noteText }) {
+    this.buildObjectsLegend(puzzle);
     $('case-title').textContent = puzzle.title || 'Case';
     const meta = $('case-meta');
     meta.textContent = `${puzzle.size}×${puzzle.size}`;
@@ -151,7 +164,7 @@ export class Hud {
     for (const [id, el] of this.cards) {
       el.classList.toggle('selected', state.selected === id);
       const pl = state.placements[id];
-      el.querySelector('.placed').textContent = pl ? `✓ R${pl.r + 1} C${pl.c + 1}` : '';
+      el.querySelector('.placed').textContent = pl ? `✓ ${cellName(pl.r, pl.c)}` : '';
     }
     document.querySelectorAll('.tool[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === state.tool));
     $('btn-undo').disabled = !state.canUndo;

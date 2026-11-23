@@ -1,3 +1,5 @@
+import { assignFacing } from '../model/facing.js';
+
 // Dev sample puzzle (5x5), following the genre conventions: suspects A-D, victim V, one clue each.
 // Intended solution: A(0,1) V(1,3) C(2,0) B(3,4) D(4,2). Victim V in Cold Storage with murderer B.
 export const SAMPLE_PUZZLE = {
@@ -50,3 +52,5 @@ export const SAMPLE_PUZZLE = {
   solution: { A: { r: 0, c: 1 }, V: { r: 1, c: 3 }, C: { r: 2, c: 0 }, B: { r: 3, c: 4 }, D: { r: 4, c: 2 } },
   murderer: 'B',
 };
+
+assignFacing(SAMPLE_PUZZLE);

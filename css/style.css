@@ -203,3 +203,12 @@ kbd { font-family: var(--font-d); background: var(--bg2); border: 2px solid var(
   .case-title .chip { display: none; }
   .toasts { top: 64px; }
 }
+
+/* Objects legend */
+.obj-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.obj-list li { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; padding: 6px 10px; border: 2px solid var(--line); border-radius: 12px; background: var(--paper); }
+.obj-list .ol-name { font-weight: 700; text-transform: capitalize; }
+.obj-list .ol-desc { grid-column: 1; font-size: 13px; opacity: .8; }
+.obj-list .ol-tag { grid-row: 1 / span 2; grid-column: 2; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; border: 2px solid var(--line); white-space: nowrap; }
+.obj-list .ol-tag.ok { background: #c9f2c7; color: #1d5a22; }
+.obj-list .ol-tag.no { background: #ffd0d0; color: #7a1f1f; }

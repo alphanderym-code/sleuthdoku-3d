@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
 import { NAME_POOL, SKIN_TONES, HAIR_COLORS, OUTFIT_COLORS, HAIR_STYLES, ACCESSORIES, SCENES, randomLook, pickCast } from '../js/data/content.js';
-import { OBJECT_TYPES, FLOOR_TYPES } from '../js/model/objects.js';
+import { OBJECT_TYPES, FLOOR_TYPES, objectInfo } from '../js/model/objects.js';
 import { makeRng } from '../js/model/rng.js';
 
-assert.ok(NAME_POOL.length >= 60);
+assert.ok(NAME_POOL.length >= 150);
+assert.equal(new Set(NAME_POOL.map((p) => p.name)).size, NAME_POOL.length, 'duplicate names');
+for (const [k, o] of Object.entries(OBJECT_TYPES)) {
+  assert.ok(typeof o.desc === 'string' && o.desc.length > 0 && o.desc.length <= 60, 'desc ' + k);
+  const i = objectInfo(k);
+  assert.deepEqual(i, { label: o.label, desc: o.desc, blocking: o.blocking });
+}
 const counts = {};
 for (const p of NAME_POOL) {
   assert.ok(p.gender === 'm' || p.gender === 'f');
@@ -36,4 +42,11 @@ for (let seed = 1; seed <= 200; seed++) {
     if (c.gender === 'f') assert.ok(look.accessory !== 'beard' && look.accessory !== 'mustache');
   }
 }
+for (let seed = 1; seed <= 50; seed++) {
+  const cast = pickCast(makeRng(seed), 9);
+  assert.equal(new Set(cast.map((c) => c.name)).size, 9, 'unique names');
+}
+const sigs = new Set();
+for (let seed = 1; seed <= 50; seed++) sigs.add(pickCast(makeRng(seed), 9).map((c) => c.name).join());
+assert.ok(sigs.size >= 45, 'casts differ across seeds');
 console.log('content tests passed');
