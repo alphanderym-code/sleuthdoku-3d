@@ -65,6 +65,7 @@ let winTimeout = 0;
 
 function init() {
   hud = new Hud(onAction);
+  hud.bindRandomSync();
   const muted = lsGet(K_MUTE) === '1';
   sfx.setMuted(muted);
   hud.setMuted(muted);

@@ -387,7 +387,7 @@ const OBJ_OCC = (t) => !isBlockingType(t);
 
 export function buildLayout(rng, N, scene) {
   const maxK = scene.rooms.length;
-  const [kLo, kHi] = (N >= 12 && scene.roomCount) || [Math.max(3, N - 1), N + 1];
+  const [kLo, kHi] = (N >= 10 && scene.roomCount) || [Math.max(3, N - 1), N + 1];
   const K = Math.min(maxK, rng.int(kLo, kHi));
   const g = partition(rng, N, K);
   if (!g) return null;
@@ -641,7 +641,7 @@ function badness(prof, difficulty) {
 // ---------------------------------------------------------------- one attempt
 
 function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
-  const eligible = SCENES.filter((s) => (difficulty === 'extreme' ? s.extreme : !(s.minSize > N)));
+  const eligible = SCENES.filter((s) => ((difficulty === 'extreme' || N >= 10) ? s.extreme : !(s.minSize > N)));
   const scene = sceneOpt
     ? SCENES.find((s) => s.key === sceneOpt) ?? rng.pick(eligible)
     : rng.pick(eligible);
@@ -729,7 +729,7 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
 
   const W = WEIGHTS[difficulty];
   const B = BUDGET[difficulty];
-  const XL = N >= 12;
+  const XL = N >= 10;
   const SAMPLE = XL ? 4 : N >= 8 ? 3 : 5;
   const NODES = XL ? 20000 : N >= 8 ? 1500 : 4000;
   const pools = {};
@@ -921,7 +921,7 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
 export function generatePuzzle({ size, difficulty = 'easy', seed = Date.now(), scene = null, budgetMs = 1400 } = {}) {
   if (!DIFFICULTIES.includes(difficulty)) throw new Error(`Unknown difficulty: ${difficulty}`);
   let N = size ?? DEFAULT_SIZE[difficulty];
-  N = difficulty === 'extreme' ? EXTREME_SIZE : Math.max(5, Math.min(9, Math.round(N)));
+  N = difficulty === 'extreme' ? EXTREME_SIZE : Math.max(5, Math.min(EXTREME_SIZE, Math.round(N)));
   const t0 = now();
   let best = null, bestBad = Infinity;
   const MAX_ATTEMPTS = 80;
@@ -930,7 +930,7 @@ export function generatePuzzle({ size, difficulty = 'easy', seed = Date.now(), s
     const res = attempt(rng, N, difficulty, scene, seed, budgetMs);
     if (res) {
       if (acceptable(res.prof, difficulty)) {
-        if (difficulty !== 'hard' || res.prof.trial + res.prof.narrow > 0 || a >= 6) return res.puzzle;
+        if (difficulty !== 'hard' || N >= 10 || res.prof.trial + res.prof.narrow > 0 || a >= 6) return res.puzzle;
       }
       const b = badness(res.prof, difficulty);
       if (b < bestBad) { bestBad = b; best = res.puzzle; }

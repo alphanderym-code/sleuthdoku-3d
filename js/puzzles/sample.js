@@ -1,4 +1,5 @@
 import { assignFacing } from '../model/facing.js';
+import { assignFlavorWeapons } from '../model/weapons.js';
 
 // Dev sample puzzle (5x5), following the genre conventions: suspects A-D, victim V, one clue each.
 // Intended solution: A(0,1) V(1,3) C(2,0) B(3,4) D(4,2). Victim V in Cold Storage with murderer B.
@@ -54,3 +55,4 @@ export const SAMPLE_PUZZLE = {
 };
 
 assignFacing(SAMPLE_PUZZLE);
+assignFlavorWeapons(SAMPLE_PUZZLE);

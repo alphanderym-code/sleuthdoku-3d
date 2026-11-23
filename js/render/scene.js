@@ -963,7 +963,7 @@ export class BoardView {
     if (this.board) { this.scene.remove(this.board); this._disposeBoard(this.board); }
     if (this._chipMats) for (const { mat } of this._chipMats.values()) { mat.map?.dispose(); mat.dispose(); }
     this._chipMats = new Map();
-    this.tokens.clear(); this.objectsAt.clear(); this.chips.clear(); this.markMeshes.clear(); this.autoMeshes.clear();
+    this.tokens.clear(); this.objectsAt.clear(); this._objPts = null; this.chips.clear(); this.markMeshes.clear(); this.autoMeshes.clear();
     this.view = null;
     this.hoverMesh.visible = false; this.selRing.visible = false; this.selPulse.visible = false; this.holdRing.visible = false;
     this._hoverKey = null;
@@ -1232,7 +1232,12 @@ export class BoardView {
 
   /** Chess-style coordinates on the frame: letters a.. for columns (bottom + top), numbers 1.. for rows (left + right); row 1 is the north (far) row. */
   _buildCoordLabels(board) {
-    const N = this.N, half = N / 2, off = half + FRAME_W / 2, y = FRAME_TOP + 0.06;
+    const N = this.N, half = N / 2, y = FRAME_TOP + 0.06;
+    const ls = this._labelSize = 0.3 * THREE.MathUtils.clamp(N / 9, 1, 1.8); // readable at 16x16
+    const off = half + Math.max(FRAME_W / 2, ls / 2 + 0.04);
+    // Room plaques lean back over the top edge; keep the top letters clear of them.
+    const topOff = Math.max(off, half + 0.8 * (0.2 + 0.018 * N) + ls * 0.6);
+    this._labelOff = off; this._labelTopOff = topOff;
     const group = new THREE.Group(); group.name = 'coords';
     const cache = new Map();
     const labelMat = (txt) => {
@@ -1247,13 +1252,13 @@ export class BoardView {
     };
     const add = (txt, x, z) => {
       const s = new THREE.Sprite(labelMat(txt));
-      s.scale.set(0.3, 0.3, 1); s.position.set(x, y, z); s.raycast = noRaycast; s.renderOrder = 5;
+      s.scale.set(ls, ls, 1); s.position.set(x, y + (ls - 0.3) / 2, z); s.raycast = noRaycast; s.renderOrder = 5;
       group.add(s);
     };
     for (let i = 0; i < N; i++) {
       const pos = i - (N - 1) / 2;
       const letter = String.fromCharCode(97 + i), num = String(i + 1);
-      add(letter, pos, off); add(letter, pos, -off);
+      add(letter, pos, off); add(letter, pos, -topOff);
       add(num, -off, pos); add(num, off, pos);
     }
     board.add(group);
@@ -1816,8 +1821,26 @@ export class BoardView {
     const h = this.N / 2 + FRAME_W + 0.08;
     const pts = [];
     for (const y of [-0.45, 0.25]) for (const x of [-h, h]) for (const z of [-h, h]) pts.push(new THREE.Vector3(x, y, z));
-    // figurines / tall objects on the back row
-    for (const x of [-h + 0.4, h - 0.4]) pts.push(new THREE.Vector3(x, 1.15, -h + 0.5));
+    // coordinate labels (sides, bottom, and the pushed-out top row) and the raised room plaques
+    const ls = this._labelSize || 0.3, lo = this._labelOff || h, lt = this._labelTopOff || h;
+    const lx = lo + ls / 2, ly = FRAME_TOP + 0.06 + ls;
+    for (const x of [-lx, lx]) for (const z of [-(lt + ls / 2), lo + ls / 2]) pts.push(new THREE.Vector3(x, ly, z));
+    const ph = this._plaqueH || 0.3;
+    for (const x of [-h + 0.4, h - 0.4]) pts.push(new THREE.Vector3(x, 0.5 + 0.9 * ph + 0.15, -(this.N / 2) - 0.8 * ph));
+    // figurines / tall objects on the back and front rows
+    for (const x of [-h + 0.4, h - 0.4]) for (const z of [-h + 0.5, h - 0.5]) pts.push(new THREE.Vector3(x, 1.15, z));
+    // real object bounds (trees, signs, ...): their box corners, cached per puzzle
+    if (!this._objPts) {
+      this._objPts = [];
+      const box = new THREE.Box3();
+      for (const o of this.objectsAt.values()) {
+        if (!o.group || !(o.height > 0.3)) continue;
+        box.setFromObject(o.group);
+        if (box.isEmpty()) continue;
+        for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) this._objPts.push(new THREE.Vector3(x, y, z));
+      }
+    }
+    for (const q of this._objPts) pts.push(q);
     const dir = this._dirFrom(polar, azimuth);
     const target = new THREE.Vector3();
     const v = new THREE.Vector3();
@@ -1829,7 +1852,7 @@ export class BoardView {
       place(d);
       for (const p of pts) {
         v.copy(p).project(cam);
-        if (v.z > 1 || Math.abs(v.x) > 0.93 || Math.abs(v.y) > 0.9) return false;
+        if (v.z > 1 || Math.abs(v.x) > 0.92 || Math.abs(v.y) > 0.9) return false;
       }
       return true;
     };

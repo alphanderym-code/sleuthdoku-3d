@@ -92,7 +92,16 @@ export class Hud {
   }
   getRandomOptions() {
     const difficulty = $('rnd-diff').value;
-    return { size: difficulty === 'extreme' ? 16 : +$('rnd-size').value, difficulty }; // Extreme implies 16x16
+    return { size: difficulty === 'extreme' ? 16 : +$('rnd-size').value, difficulty };
+  }
+  // Keep the size/difficulty selects consistent: Extreme <-> 16x16 (other combos are all valid).
+  bindRandomSync() {
+    const size = $('rnd-size'), diff = $('rnd-diff');
+    if (!size || !diff) return;
+    diff.addEventListener('change', () => { if (diff.value === 'extreme') size.value = '16'; });
+    size.addEventListener('change', () => {
+      if (diff.value === 'extreme' && +size.value !== 16) diff.value = 'hard';
+    });
   }
   setRandomBusy(busy) {
     const b = $('rnd-go');

@@ -40,3 +40,17 @@ export function weaponsForScene(scene) {
     .filter(([, w]) => (w.scenes ? w.scenes.includes(scene.key) : !(w.indoor && scene.outdoor) && !(w.outdoor && !scene.outdoor)))
     .map(([k]) => k);
 }
+
+// Hand-authored cases have no weapons: give each suspect a scene-flavored one, seeded by the case id.
+// Cosmetic only (no wound note), so the solution and its uniqueness are unchanged.
+export function assignFlavorWeapons(puzzle) {
+  let h = 2166136261;
+  for (const ch of String(puzzle.id ?? puzzle.title ?? '')) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  const list = weaponsForScene({ key: puzzle.scene ?? puzzle.id, outdoor: !!puzzle.outdoor });
+  for (const ch of puzzle.characters || []) {
+    if (ch.victim || ch.weapon || !list.length) continue;
+    h = Math.imul(h ^ ch.id.charCodeAt(0), 16777619) >>> 0;
+    ch.weapon = list[h % list.length];
+  }
+  return puzzle;
+}

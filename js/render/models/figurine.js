@@ -1,5 +1,6 @@
 // Chibi figurines: big head with face, outfit variants, hair styles, accessories, letter disc.
 import * as THREE from 'three';
+import { createWeapon3d } from './weapons3d.js';
 import {
   add, addMerged, toonOwn, canvasTex, addOutlines, hashStr, rng, shade, mix, paleColor, contrastAccent,
   RB, CYL, SPH, CONE, TOR, CAPS,
@@ -58,7 +59,7 @@ function capGeo(theta, r) {
  * group.userData.materials = toon materials owned by this figurine (for flashes).
  * group.userData.idle(t) = subtle breathing / blink / head tilt.
  */
-export function createFigurine(character) {
+export function createFigurine(character, weapon) {
   const ch = character || {};
   const look = ch.look || {};
   const victim = !!ch.victim;
@@ -199,6 +200,16 @@ export function createFigurine(character) {
   buildNeckAccessory(g, look.accessory || null, { mAcc, mat, accent, outfit });
 
   addOutlines(g, 0.014);
+
+  // ---- Held weapon (suspects only), parented to the right arm so it follows the idle sway
+  const weaponId = weapon !== undefined ? weapon : ch.weapon;
+  if (weaponId && !victim) {
+    const wp = createWeapon3d(weaponId, mats);
+    // Brandished out to the side (arm-local z -1.75 + arm sway ~0.55 = pointing outward, slightly up) and enlarged
+    // so the prop reads at board distance, including on 16x16.
+    wp.scale.setScalar(1.5); wp.position.set(0.01, -0.21, 0.05); wp.rotation.set(0.35, 0, -1.75);
+    arms[1].add(wp);
+  }  // (added after outlining; the prop outlines itself)
 
   const ph = (seed % 1000) / 1000 * Math.PI * 2;
   const blinkOff = (seed % 997) / 997 * 4;

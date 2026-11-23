@@ -1,5 +1,5 @@
 // Tiny Crimes service worker. Regenerate the list with: node tools/sw-list.mjs
-const CACHE = 'tinycrimes-v5';
+const CACHE = 'tinycrimes-v6';
 const PRECACHE = [
   './',
   './index.html',
@@ -24,6 +24,7 @@ const PRECACHE = [
   'js/render/models/figurine.js',
   'js/render/models/kit.js',
   'js/render/models/objects.js',
+  'js/render/models/weapons3d.js',
   'js/render/models.js',
   'js/render/scene.js',
   'js/ui/hud.js',

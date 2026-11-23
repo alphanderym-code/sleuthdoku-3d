@@ -7,6 +7,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { createObject, createFigurine, disposeObject } from '../js/render/models.js';
+import { WEAPON3D_IDS as WEAPON_IDS } from "../js/render/models/weapons3d.js";
 import { OBJECT_TYPES } from '../js/model/objects.js';
 const q = new URLSearchParams(location.search);
 const W = innerWidth, H = innerHeight;
@@ -39,7 +40,7 @@ if (mode === 'objects') {
     { id: 'H', look: { skin: '#6b4226', hair: '#e8e8e8', outfit: '#2ec4b6', hairStyle: 'short', accessory: 'mustache' } },
     { id: 'I', victim: true, look: { skin: '#f1c27d', hair: '#4a2c17', outfit: '#ff7b00', hairStyle: 'curly', accessory: null } },
   ];
-  const only = q.get('i'); looks.forEach((c, i) => { if (only !== null && +only !== i) return; const f = createFigurine(c); f.position.set(only !== null ? 2 : (i % 5) * 1.0, 0, only !== null ? 0.5 : Math.floor(i / 5) * 1.0); scene.add(f); if (f.userData.idle) idles.push(f.userData.idle); });
+  const only = q.get('i'); looks.forEach((c, i) => { if (only !== null && +only !== i) return; const f = createFigurine(c, WEAPON_IDS[i % WEAPON_IDS.length]); f.position.set(only !== null ? 2 : (i % 5) * 1.0, 0, only !== null ? 0.5 : Math.floor(i / 5) * 1.0); scene.add(f); if (f.userData.idle) idles.push(f.userData.idle); });
   const el = +(q.get('el') || 50) * Math.PI / 180, dist = +(q.get('d') || 6);
   cam.position.set(2, Math.cos(el) * dist, 0.5 + Math.sin(el) * dist); cam.lookAt(2, 0.4, 0.5);
 }

@@ -24,7 +24,7 @@ const ACC = [null, 'hat', 'glasses', 'beard', 'mustache', 'bowtie', 'scarf'];
 
 function validate(p, { requireLogic = true } = {}) {
   const N = p.size;
-  assert.ok(N >= 5 && N <= 9, 'size');
+  assert.ok(N >= 5 && N <= 16, 'size');
   assert.equal(p.rooms.length, N);
   for (const row of p.rooms) assert.equal(row.length, N);
   // Rooms: contiguous, >= 2 cells, roomInfo complete.
@@ -119,7 +119,7 @@ function validate(p, { requireLogic = true } = {}) {
 const CLUE_BUDGET = { 'very-easy': [1, 1], easy: [1, 1], medium: [1, 2], hard: [1, 2] };
 function conventions(p) {
   const N = p.size;
-  const want = [...'ABCDEFGHI'.slice(0, N - 1), 'V'];
+  const want = [...'ABCDEFGHIJKLMNOPQRSTU'.slice(0, N - 1), 'V'];
   assert.deepEqual(p.characters.map((c) => c.id), want, 'ids A, B, C…, V in card order');
   const victim = p.characters[N - 1];
   assert.ok(victim.victim, 'victim is the last card');
@@ -127,7 +127,7 @@ function conventions(p) {
   const [lo, hi] = CLUE_BUDGET[p.difficulty];
   for (const ch of p.characters) {
     if (ch.victim) continue;
-    assert.ok(ch.clues.length >= lo && ch.clues.length <= hi, `${ch.id} has ${ch.clues.length} clues (${p.difficulty})`);
+    assert.ok(N >= 10 ? ch.clues.length >= 1 : ch.clues.length >= lo && ch.clues.length <= hi, `${ch.id} has ${ch.clues.length} clues (${p.difficulty})`);
     for (const cl of ch.clues) {
       assert.notEqual(cl.type, 'victim');
       assert.notEqual(clueOther(cl), victim.id, `${ch.id} clue ${JSON.stringify(cl)} references the victim`);
@@ -137,7 +137,7 @@ function conventions(p) {
     }
   }
   const notes = p.notes || [];
-  assert.ok(Array.isArray(notes) && notes.length <= 2, 'at most 2 case notes');
+  assert.ok(Array.isArray(notes) && notes.length <= (N >= 10 ? 3 : 2), 'at most 2 case notes');
   for (const n of notes) assert.ok(!/victim|murder/i.test(noteText(n, p)));
 }
 
@@ -204,6 +204,16 @@ test('conventions hold across many generated puzzles', () => {
     notes += (p.notes || []).length;
   }
   console.log(`       ${notes} case notes over 24 puzzles`);
+});
+test('large sizes 10-16 generate at every difficulty', () => {
+  for (const [n, d] of [[10, 'easy'], [12, 'hard'], [16, 'medium'], [11, 'very-easy']]) {
+    const t = performance.now();
+    const p = generatePuzzle({ size: n, difficulty: d, seed: 5 });
+    assert.equal(p.size, n);
+    assert.equal(p.difficulty, d);
+    validate(p);
+    assert.ok(performance.now() - t < 4000, `${n} ${d} fast enough`);
+  }
 });
 test('default size per difficulty', () => {
   assert.equal(generatePuzzle({ difficulty: 'very-easy', seed: 1 }).size, 5);
