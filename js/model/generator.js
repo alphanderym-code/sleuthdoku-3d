@@ -5,7 +5,9 @@
 import { makeRng } from './rng.js';
 import { isBlockingType } from './objects.js';
 import { roomAt, objectAt, isBeside, isCorner } from './grid.js';
-import { evaluateClue, evaluateNote, roomNumber } from './clues.js';
+import { evaluateClue, evaluateNote, roomNumber, lineOfSight, roomAdjacency } from './clues.js';
+import { categoriesPresent } from './categories.js';
+import { weaponsForScene, woundOf } from './weapons.js';
 import { solve, prepare, murdererOf } from './solver.js';
 import { propagate } from './hints.js';
 import { assignFacing } from './facing.js';
@@ -21,29 +23,34 @@ const now = () => (typeof performance !== 'undefined' && performance.now ? perfo
 // Easy levels favour strong / compound clues so a single clue per suspect is enough.
 const WEIGHTS = {
   'very-easy': { onObjectInRoom: 6, aloneInRoom: 6, onObject: 4, inRoom: 4, row: 3, column: 3, aloneWith: 3,
+    besideCategory: 1.5, notBesideCategory: 0.6, sees: 0.5, wound: 0.8, witness: 0.8,
     besideObject: 3, corner: 1.5, alone: 1.5, rowOneOf: 1.5, columnOneOf: 1.5, besidePerson: 1.5, sameRoom: 1,
     dir: 0.8, dirDist: 1, dirDiag: 0.5, dirOther: 0.5, aloneWithGender: 0.8, withSomeoneBeside: 0.8,
     notOnObject: 0.3, notInRoom: 0.3, notBesideObject: 0.3, diagonal: 0.3 },
   easy: { onObjectInRoom: 5, aloneInRoom: 5, onObject: 3, inRoom: 3, row: 2.5, column: 2.5, aloneWith: 3,
+    besideCategory: 2.5, notBesideCategory: 1, sees: 1.2, wound: 1.5, witness: 1.5,
     besideObject: 3, corner: 2, alone: 2, rowOneOf: 2, columnOneOf: 2, besidePerson: 2, sameRoom: 1.5,
     dir: 1.5, dirDist: 2, dirDiag: 1, dirOther: 1, aloneWithGender: 1.5, withSomeoneBeside: 1.5,
     notOnObject: 0.8, notInRoom: 0.8, notBesideObject: 0.6, diagonal: 0.8 },
   medium: { onObjectInRoom: 3, aloneInRoom: 3, onObject: 2, inRoom: 2, row: 1.5, column: 1.5, aloneWith: 3,
+    besideCategory: 4, notBesideCategory: 3, sees: 4, wound: 2.5, witness: 2.5,
     besideObject: 3, corner: 2, alone: 2, rowOneOf: 2.5, columnOneOf: 2.5, besidePerson: 3, sameRoom: 2,
     dir: 2.5, dirDist: 3, dirDiag: 2.5, dirOther: 2, aloneWithGender: 2, withSomeoneBeside: 2,
     notOnObject: 1.5, notInRoom: 1.5, notBesideObject: 1.5, diagonal: 2 },
   hard: { onObjectInRoom: 1.5, aloneInRoom: 1.5, onObject: 1, inRoom: 1, row: 0.7, column: 0.7, aloneWith: 2.5,
+    besideCategory: 5, notBesideCategory: 4, sees: 6, wound: 4, witness: 4,
     besideObject: 2.5, corner: 2, alone: 2, rowOneOf: 2, columnOneOf: 2, besidePerson: 3, sameRoom: 2.5,
     dir: 3, dirDist: 3, dirDiag: 3, dirOther: 3, aloneWithGender: 2.5, withSomeoneBeside: 2.5,
     notOnObject: 2, notInRoom: 2, notBesideObject: 2, diagonal: 2.5 },
   extreme: { onObjectInRoom: 2, aloneInRoom: 1.5, onObject: 1.5, inRoom: 1.5, row: 0.7, column: 0.7, aloneWith: 2.5,
+    besideCategory: 7, notBesideCategory: 6, sees: 8, wound: 6, witness: 6,
     besideObject: 2.5, corner: 1.5, alone: 1.5, rowOneOf: 2, columnOneOf: 2, besidePerson: 3, sameRoom: 2.5,
     dir: 3, dirDist: 3, dirDiag: 3, dirOther: 3, aloneWithGender: 2.5, withSomeoneBeside: 2.5,
     notOnObject: 1.5, notInRoom: 1.5, notBesideObject: 1.5, diagonal: 2.5, rowOffset: 3, roomNumberCompare: 3.5 },
 };
 // Clue kinds used when repairing a puzzle the logic engine gets stuck on.
 const STRONG = new Set(['inRoom', 'row', 'column', 'onObject', 'onObjectInRoom', 'aloneInRoom', 'aloneWith',
-  'corner', 'besideObject', 'rowOneOf', 'columnOneOf', 'dirDist', 'besidePerson']);
+  'corner', 'besideObject', 'besideCategory', 'rowOneOf', 'columnOneOf', 'dirDist', 'besidePerson']);
 // Starting clues at 16x16 (strong: they pin a room or a line, so the solver stays fast).
 const START = new Set(['inRoom', 'onObjectInRoom', 'aloneInRoom']);
 // Clue budget (SPEC v2 item 4) and case-note budget per difficulty.
@@ -463,6 +470,11 @@ function cluePool(puzzle, sol, id, victimId) {
   }
   for (const t of occTypes) if (!o || o.type !== t) add({ type: 'notOnObject', object: t }, 0.6);
   const types = [...new Set(puzzle.objects.map((x) => x.type))];
+  for (const cat of categoriesPresent(puzzle)) {
+    const clue = { type: 'besideCategory', category: cat, v: 0 };
+    const beside = evaluateClue(clue, id, { [id]: p }, puzzle) === true;
+    for (let v = 0; v < 3; v++) add({ type: beside ? 'besideCategory' : 'notBesideCategory', category: cat, v }, (beside ? 1 : 0.5) / 3);
+  }
   for (const t of types) {
     const beside = puzzle.objects.some((x) => x.type === t && isBeside(puzzle, p, x));
     add({ type: beside ? 'besideObject' : 'notBesideObject', object: t }, beside ? 1 : 0.5);
@@ -518,6 +530,7 @@ function cluePool(puzzle, sol, id, victimId) {
     }
     if (dr && dc) add({ type: 'dir', dir: ns + ew, of: ch.id });
     if (Math.abs(dr) === Math.abs(dc)) add({ type: 'diagonal', with: ch.id });
+    if (lineOfSight(puzzle, p, q)) add({ type: 'sees', who: ch.id }, 1.5);
   }
   return out;
 }
@@ -542,6 +555,11 @@ function notePool(puzzle, sol, victimId) {
     if (k === vRoom || list.length !== 2 || list[0].gender === list[1].gender) continue;
     out.push({ note: { type: 'roomGenders', room: k }, w: 1 });
   }
+  // Weapon wound (the murderer's) and witness zone (victim's room, or a neighbouring room).
+  const murderer = chars.find((ch) => !ch.victim && byRoom[vRoom]?.includes(ch));
+  if (murderer?.weapon) out.push({ note: { type: 'wound', wound: woundOf(murderer.weapon) }, w: 1 });
+  out.push({ note: { type: 'witness', room: vRoom }, w: 0.6 });
+  for (const k of roomAdjacency(puzzle).get(vRoom) ?? []) out.push({ note: { type: 'witness', room: k }, w: 1 });
   return out;
 }
 
@@ -690,6 +708,16 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
     });
   });
   characters.sort((a, b) => (a.id < b.id ? -1 : 1));
+  // Weapons: every suspect carries one (scene flavor); a few wound kinds, so weapons are shared.
+  {
+    const wl = weaponsForScene(scene);
+    const wounds = rng.shuffle([...new Set(wl.map(woundOf))]).slice(0, N <= 6 ? 3 : 4);
+    for (const ch of characters) {
+      if (ch.victim) continue;
+      const w = rng.pick(wounds);
+      ch.weapon = rng.pick(wl.filter((k) => woundOf(k) === w));
+    }
+  }
   const victimId = characters.find((c) => c.victim).id;
   const suspectIds = characters.filter((c) => !c.victim).map((c) => c.id);
 
@@ -709,7 +737,8 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
     pools[id] = cluePool(base, sol, id, victimId).filter((c) => evaluateClue(c.clue, id, sol, base) === true);
     if (!pools[id].length) return null;
   }
-  const notesAll = notePool(base, sol, victimId).filter((n) => evaluateNote(n.note, sol, base) === true);
+  const notesAll = notePool(base, sol, victimId).filter((n) => evaluateNote(n.note, sol, base) === true)
+    .map((n) => ({ ...n, w: n.w * (W[n.note.type] ?? 1) }));
   const clueW = (c) => (W[wkey(c.clue)] ?? 0.5) * c.w;
 
   // State: clue lists per suspect + notes.
@@ -807,21 +836,26 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
     // Phase 2 (extreme): weaken clues one at a time (drop a second clue or swap in a weaker one),
     // keeping the solution unique, until the time budget is used.
     const tEnd = now() + Math.max(900, (budgetMs ?? 1400) * 0.9);
-    const dropClue = (st, id) => {
+    // Clues of the new mechanics injected below are protected from later weakening.
+    const protectedKeys = new Set();
+    const free = (cl) => cl.map((x, i) => i).filter((i) => !protectedKeys.has(keyOf(cl[i])));
+    const dropClue = (st, id, idxs) => {
       const next = { clues: { ...st.clues }, notes: st.notes };
-      const l = st.clues[id].slice(); l.splice(rng.int(0, l.length - 1), 1); next.clues[id] = l;
+      const l = st.clues[id].slice(); l.splice(rng.pick(idxs), 1); next.clues[id] = l;
       return next;
     };
     const weakenStep = (st, forceDrop) => {
       const id = rng.pick(suspectIds);
       const cl = st.clues[id];
-      if (cl.length > 1 && (forceDrop || rng.chance(0.3))) return dropClue(st, id);
+      const idxs = free(cl);
+      if (!idxs.length) return null;
+      if (cl.length > 1 && (forceDrop || rng.chance(0.3))) return dropClue(st, id, idxs);
       if (forceDrop) return null;
       const have = new Set(cl.map(keyOf));
       const opts = pools[id].filter((x) => !have.has(keyOf(x.clue)));
       if (!opts.length) return null;
       const c = pickW(rng, opts, (x) => clueW(x) * (STRONG.has(wkey(x.clue)) ? 0.2 : 1));
-      return apply(st, { kind: 'replace', owner: id, idx: rng.int(0, cl.length - 1), clue: c.clue });
+      return apply(st, { kind: 'replace', owner: id, idx: rng.pick(idxs), clue: c.clue });
     };
     const tryStep = (forceDrop) => {
       const st = weakenStep(state, forceDrop);
@@ -830,6 +864,28 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
       if (r.aborted || r.count !== 1) return false;
       state = st; return true;
     };
+    // Make sure the new mechanics show up: swap a few of them in (kept only while the solution stays unique).
+    // Extreme mixes every note kind: true notes only add constraints, so uniqueness is kept.
+    for (const type of ['wound', 'witness']) {
+      if (state.notes.length >= B.maxNotes || state.notes.some((n) => n.type === type)) continue;
+      const opts = notesAll.filter((n) => n.note.type === type);
+      if (opts.length) state = { ...state, notes: [...state.notes, pickW(rng, opts, (n) => n.w).note] };
+    }
+    const FEATURES = [new Set(['besideCategory', 'notBesideCategory']), new Set(['sees'])];
+    for (const kinds of FEATURES) {
+      let have = 0;
+      for (let tries = 0; tries < 30 && have < 2 && now() < tEnd - 300; tries++) {
+        const id = rng.pick(suspectIds);
+        const opts = pools[id].filter((x) => kinds.has(x.clue.type));
+        const idxs = free(state.clues[id]);
+        if (!opts.length || !idxs.length) continue;
+        const c = pickW(rng, opts, (x) => x.w);
+        const st = apply(state, { kind: 'replace', owner: id, idx: rng.pick(idxs), clue: c.clue });
+        const r = solve(build(st), { limit: 2, nodeLimit: 8000 });
+        if (r.aborted || r.count !== 1) continue;
+        state = st; protectedKeys.add(keyOf(c.clue)); have++;
+      }
+    }
     for (let it = 0; it < 600 && now() < tEnd; it++) tryStep(false);
     const pzx = build(state);
     return { puzzle: { ...pzx, solution: sol, murderer: murdererOf(pzx, sol) }, prof: { ok: true, direct: 0, trial: 0, narrow: 0, stuck: [] }, scene: scene.key };

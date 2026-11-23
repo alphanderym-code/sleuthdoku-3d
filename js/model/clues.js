@@ -1,11 +1,14 @@
 // Clue + case-note evaluation and text. Pure ES module (Node + browser).
 import { objectLabel } from './objects.js';
 import { roomAt, isBeside, isCorner, objectAt, roomKeys } from './grid.js';
+import { isBlockingType } from './objects.js';
+import { CATEGORIES, PERSONALITY_TYPES, personalityBody } from './categories.js';
+import { woundOf, woundText } from './weapons.js';
 
 // Clues that depend only on the owner's own cell.
 const UNARY = new Set([
   'victim', 'inRoom', 'notInRoom', 'onObject', 'notOnObject', 'onObjectInRoom',
-  'besideObject', 'notBesideObject', 'row', 'column', 'rowOneOf', 'columnOneOf', 'corner',
+  'besideObject', 'notBesideObject', 'besideCategory', 'notBesideCategory', 'row', 'column', 'rowOneOf', 'columnOneOf', 'corner',
 ]);
 
 // Clues that depend on who else is (or is not) in the owner's room.
@@ -34,6 +37,57 @@ function besideObjectType(puzzle, p, type) {
     if (o.type === type && isBeside(puzzle, p, o)) return true;
   }
   return false;
+}
+
+function besideCategory(puzzle, p, category) {
+  const types = CATEGORIES[category]?.types;
+  if (!types) throw new Error(`Unknown category: ${category}`);
+  for (const o of puzzle.objects || []) {
+    if (types.includes(o.type) && isBeside(puzzle, p, o)) return true;
+  }
+  return false;
+}
+
+// Line of sight: p and q are on a common diagonal (characters never share a row or column), every
+// cell on the line (both ends included) lies in the same room (walls block) and no blocking object
+// sits on a cell strictly between them.
+export function lineOfSight(puzzle, p, q) {
+  const dr = q.r - p.r, dc = q.c - p.c;
+  const n = Math.abs(dr);
+  if (n === 0 || n !== Math.abs(dc)) return false;
+  const sr = Math.sign(dr), sc = Math.sign(dc);
+  const room = roomAt(puzzle, p.r, p.c);
+  for (let k = 1; k <= n; k++) {
+    const r = p.r + sr * k, c = p.c + sc * k;
+    if (roomAt(puzzle, r, c) !== room) return false;
+    if (k < n) { const o = objectAt(puzzle, r, c); if (o && isBlockingType(o.type)) return false; }
+  }
+  return true;
+}
+
+// Room -> Set of rooms sharing a border (orthogonal cell contact) with it.
+const roomAdjCache = new WeakMap();
+export function roomAdjacency(puzzle) {
+  let m = roomAdjCache.get(puzzle);
+  if (m) return m;
+  m = new Map();
+  const N = puzzle.size;
+  const link = (a, b) => {
+    if (a === b) return;
+    (m.get(a) ?? m.set(a, new Set()).get(a)).add(b);
+    (m.get(b) ?? m.set(b, new Set()).get(b)).add(a);
+  };
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    if (c + 1 < N) link(puzzle.rooms[r][c], puzzle.rooms[r][c + 1]);
+    if (r + 1 < N) link(puzzle.rooms[r][c], puzzle.rooms[r + 1][c]);
+  }
+  roomAdjCache.set(puzzle, m);
+  return m;
+}
+
+// Witness zone: the victim's room is `zone` itself or shares a border with it.
+export function inWitnessZone(puzzle, victimRoom, zone) {
+  return victimRoom === zone || !!roomAdjacency(puzzle).get(victimRoom)?.has(zone);
 }
 
 // Others (placed) in `room`, and how many characters (other than `except`) are still unplaced.
@@ -72,6 +126,8 @@ export function evaluateClue(clue, charId, positions, puzzle) {
     case 'onObjectInRoom': return room === clue.room && objectAt(puzzle, p.r, p.c)?.type === clue.object;
     case 'besideObject': return besideObjectType(puzzle, p, clue.object);
     case 'notBesideObject': return !besideObjectType(puzzle, p, clue.object);
+    case 'besideCategory': return besideCategory(puzzle, p, clue.category);
+    case 'notBesideCategory': return !besideCategory(puzzle, p, clue.category);
     case 'row': return p.r === clue.index;
     case 'column': return p.c === clue.index;
     case 'rowOneOf': return clue.indices.includes(p.r);
@@ -124,6 +180,8 @@ export function evaluateClue(clue, charId, positions, puzzle) {
       if (ok && clue.otherRoom) ok = room !== roomAt(puzzle, q.r, q.c);
       return ok;
     }
+    // "Could see": diagonal line of sight, same room, no blocking object in between.
+    case 'sees': return lineOfSight(puzzle, p, q);
     case 'diagonal': {
       const dr = Math.abs(p.r - q.r), dc = Math.abs(p.c - q.c);
       return dr === dc && dr > 0;
@@ -179,6 +237,19 @@ export function evaluateNote(note, positions, puzzle) {
       if (inside.length === 2 && inside[0].ch.gender === inside[1].ch.gender) return false;
       if (inside.length + unplaced < 2) return false;
       return unplaced ? null : true;
+    }
+    case 'wound':
+    case 'witness': {
+      const v = puzzle.characters.find((c) => c.victim);
+      const vp = v && positions[v.id];
+      if (!vp) return null;
+      const vr = roomAt(puzzle, vp.r, vp.c);
+      if (note.type === 'witness') return inWitnessZone(puzzle, vr, note.room);
+      // The murderer is the one other person in the victim's room: they must carry a matching weapon.
+      const mates = placed.filter(({ ch, p }) => !ch.victim && roomAt(puzzle, p.r, p.c) === vr);
+      if (mates.length > 1 || mates.some(({ ch }) => woundOf(ch.weapon) !== note.wound)) return false;
+      if (mates.length === 1) return true;
+      return unplaced ? null : false;
     }
     case 'roomParity': {
       // Every numbered room holds a number of people with the same parity as its number (zero is even).
@@ -329,6 +400,9 @@ export function clueBody(clue, puzzle, character) {
     }
     case 'roomNumberCompare':
       return `was in a **${clue.cmp === 'higher' ? 'higher' : 'lower'}-numbered ${numberedWord(puzzle)}** than **${charName(puzzle, clue.of)}**`;
+    case 'sees': return `could **see** **${charName(puzzle, clue.who)}**`;
+    case 'besideCategory':
+    case 'notBesideCategory': return personalityBody(clue);
     case 'diagonal': return `was on a **diagonal with** **${charName(puzzle, clue.with)}**`;
     case 'alone': return 'was **alone**';
     case 'aloneInRoom': return (roomNumber(puzzle, clue.room) != null ? `was **alone in** ${theRoom(puzzle, clue.room)}` : `was **alone in the** **${roomName(puzzle, clue.room)}**`);
@@ -349,6 +423,7 @@ export function pronoun(character) {
 }
 
 export function clueText(clue, character, puzzle) {
+  if (PERSONALITY_TYPES.has(clue.type)) return `**${character?.name ?? 'This suspect'}** ${personalityBody(clue)}.`;
   if (clue.type === 'victim') return `The **Victim**. ${pronoun(character)} was alone with the murderer.`;
   return `${pronoun(character)} ${clueBody(clue, puzzle, character)}.`;
 }
@@ -370,6 +445,8 @@ export function noteText(note, puzzle) {
       const w = numberedWord(puzzle);
       return `Every **even-numbered** ${w} held an **even** number of people (zero counts), and every **odd-numbered** ${w} an **odd** number.`;
     }
+    case 'wound': return `Cause of death: **${woundText(note.wound)}**.`;
+    case 'witness': return `A scream was heard from ${theRoom(puzzle, note.room)}.`;
     case 'roomGenders': return `There was **a man and a woman** in ${theRoom(puzzle, note.room)}.`;
   }
   throw new Error(`Unknown note type: ${note.type}`);

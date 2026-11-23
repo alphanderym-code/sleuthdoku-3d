@@ -1,5 +1,6 @@
 // Backtracking solver. Pure ES module (Node + browser).
-import { evaluateClue, isUnaryClue, isRoomClue, clueOther } from './clues.js';
+import { evaluateClue, isUnaryClue, isRoomClue, clueOther, inWitnessZone } from './clues.js';
+import { woundOf } from './weapons.js';
 import { isOccupiable, roomAt, objectAt } from './grid.js';
 
 const prepCache = new WeakMap();
@@ -42,11 +43,21 @@ export function prepare(puzzle) {
   }
   const notes = Array.isArray(puzzle.notes) ? puzzle.notes : [];
   for (const n of notes) {
-    if (!['countOnObject', 'noEmptyRoom', 'emptyRooms', 'roomGenders', 'roomParity'].includes(n.type)) throw new Error(`Unknown note type: ${n.type}`);
+    if (!['countOnObject', 'noEmptyRoom', 'emptyRooms', 'roomGenders', 'roomParity', 'wound', 'witness'].includes(n.type)) throw new Error(`Unknown note type: ${n.type}`);
   }
   // Integer room index + object type per cell (hot-path global checks).
   const roomList = [...new Set(roomOf)];
   const roomInt = roomOf.map((k) => roomList.indexOf(k));
+  // Weapon notes: suspects whose weapon cannot match every wound note must not share the victim's room.
+  const woundNotes = notes.filter((n) => n.type === 'wound');
+  const badSuspect = {};
+  for (const ch of chars) badSuspect[ch.id] = !ch.victim && woundNotes.some((n) => woundOf(ch.weapon) !== n.wound);
+  const hasWound = woundNotes.length > 0 && !!victim;
+  // Witness notes: allowed victim rooms (by room index); also prunes the victim's domain.
+  const witnessZones = notes.filter((n) => n.type === 'witness').map((n) => roomList.map((k) => inWitnessZone(puzzle, k, n.room)));
+  if (victim && witnessZones.length) {
+    domains[victim] = domains[victim].filter((i) => witnessZones.every((z) => z[roomInt[i]]));
+  }
   const objType = cells.map((p) => objectAt(puzzle, p.r, p.c)?.type ?? null);
   const gender = {};
   for (const ch of chars) gender[ch.id] = ch.gender;
@@ -59,12 +70,13 @@ export function prepare(puzzle) {
     (pair[ch.id][o] ||= []).push({ owner: ch.id, clue: cl });
     (pair[o][ch.id] ||= []).push({ owner: ch.id, clue: cl });
   }
+  const noteZone = notes.map((n) => (n.type === 'witness' ? roomList.map((k) => inWitnessZone(puzzle, k, n.room)) : null));
   const noteRoomInt = notes.map((n) => (n.type === 'roomGenders' ? roomList.indexOf(n.room) : -1));
   // Numbered rooms for the parity note: [{ ri (room index), par (0 even / 1 odd) }].
   const parityRooms = [];
   roomList.forEach((k, ri) => { const num = puzzle.roomInfo?.[k]?.number; if (num != null) parityRooms.push({ ri, par: num & 1 }); });
   // Binary clues between two characters that support cheap bound / mask propagation (arc pruning).
-  const ARC_TYPES = new Set(['dir', 'rowOffset', 'sameRoom', 'roomNumberCompare']);
+  const ARC_TYPES = new Set(['dir', 'rowOffset', 'sameRoom', 'roomNumberCompare', 'sees', 'diagonal']);
   const arcs = [];
   for (const ch of chars) for (const cl of ownBinary[ch.id]) {
     if (!ARC_TYPES.has(cl.type) || roomList.length > 30) continue;
@@ -73,7 +85,7 @@ export function prepare(puzzle) {
   }
   const roomNum = roomList.map((k) => puzzle.roomInfo?.[k]?.number ?? null);
   P = { N, parityRooms, arcs, roomNum, cells, roomOf, ids, victim, domains, ownBinary, ownOther, reverse, roomClues, alone, notes,
-    roomList, roomInt, objType, gender, pair, noteRoomInt };
+    roomList, roomInt, objType, gender, pair, noteRoomInt, noteZone, badSuspect, hasWound };
   prepCache.set(puzzle, P);
   return P;
 }
@@ -85,7 +97,7 @@ function roomIdx(P, p) {
 // Counts over the placed characters except `skip` (used by the global checks).
 function makeCtx(P, pos, skip) {
   const R = P.roomList.length;
-  const cnt = new Int8Array(R), male = new Int8Array(R);
+  const cnt = new Int8Array(R), male = new Int8Array(R), bad = new Int8Array(R);
   const on = {};
   let unplaced = 0, occN = 0;
   for (const id of P.ids) {
@@ -94,11 +106,12 @@ function makeCtx(P, pos, skip) {
     const i = p.r * P.N + p.c, ri = P.roomInt[i];
     if (!cnt[ri]++) occN++;
     if (P.gender[id] === 'm') male[ri]++;
+    if (P.badSuspect[id]) bad[ri]++;
     const t = P.objType[i];
     if (t) on[t] = (on[t] || 0) + 1;
   }
   const vp = P.victim && P.victim !== skip ? pos[P.victim] : null;
-  return { cnt, male, on, unplaced, occN, vRoom: vp ? P.roomInt[vp.r * P.N + vp.c] : -1 };
+  return { cnt, male, bad, on, unplaced, occN, vRoom: vp ? P.roomInt[vp.r * P.N + vp.c] : -1 };
 }
 
 // Victim rule + case notes with `id` added at cell i on top of ctx (ctx excludes id).
@@ -112,6 +125,8 @@ function globalOk(P, ctx, id, i) {
     if (vr >= 0) {
       const n = ctx.cnt[vr] + (vr === ri ? 1 : 0);
       if (n > 2 || n + left < 2) return false;
+      // Weapon note: nobody sharing the victim's room may carry a non-matching weapon.
+      if (P.hasWound && ctx.bad[vr] + (vr === ri && id !== P.victim && P.badSuspect[id] ? 1 : 0) > 0) return false;
     }
   }
   const notes = P.notes;
@@ -140,6 +155,12 @@ function globalOk(P, ctx, id, i) {
           if ((c & 1) !== pr[q].par) need++;
         }
         if (need > left) return false;
+        break;
+      }
+      case 'witness': {
+        // Victim's room (placed now or earlier) must lie in the zone.
+        const vi = id === P.victim ? ri : ctx.vRoom;
+        if (vi >= 0 && !P.noteZone[k][vi]) return false;
         break;
       }
       case 'roomGenders': {
@@ -285,18 +306,18 @@ export function solve(puzzle, { limit = 2, fixed = {}, nodeLimit = Infinity } = 
   // Arc pruning for relative clues between two still-unplaced characters: drop candidates that no
   // candidate of the other character can support (row/column bounds and masks, room masks).
   function stats(list) {
-    let rmin = 99, rmax = -1, cmin = 99, cmax = -1, rowMask = 0, colMask = 0, roomMask = 0, nmin = 1e9, nmax = -1e9;
+    let rmin = 99, rmax = -1, cmin = 99, cmax = -1, rowMask = 0, colMask = 0, roomMask = 0, diagA = 0, diagB = 0, nmin = 1e9, nmax = -1e9;
     for (const i of list) {
       const r = (i / N) | 0, c = i % N, rj = P.roomInt[i];
       if (r < rmin) rmin = r;
       if (r > rmax) rmax = r;
       if (c < cmin) cmin = c;
       if (c > cmax) cmax = c;
-      rowMask |= 1 << r; colMask |= 1 << c; roomMask |= 1 << rj;
+      rowMask |= 1 << r; colMask |= 1 << c; roomMask |= 1 << rj; diagA |= 1 << (r - c + N - 1); diagB |= 1 << (r + c);
       const nm = P.roomNum[rj];
       if (nm != null) { if (nm < nmin) nmin = nm; if (nm > nmax) nmax = nm; }
     }
-    return { rmin, rmax, cmin, cmax, rowMask, colMask, roomMask, nmin, nmax };
+    return { rmin, rmax, cmin, cmax, rowMask, colMask, roomMask, diagA, diagB, nmin, nmax };
   }
   // Does cell i have support in S (the other character's candidate stats)? owner: i belongs to the clue's owner.
   function supported(cl, i, S, owner) {
@@ -304,6 +325,11 @@ export function solve(puzzle, { limit = 2, fixed = {}, nodeLimit = Infinity } = 
     switch (cl.type) {
       case 'rowOffset': { const x = owner ? r - cl.delta : r + cl.delta; return x >= 0 && x < N && ((S.rowMask >> x) & 1) === 1; }
       case 'sameRoom': return ((S.roomMask >> rj) & 1) === 1;
+      // Needs a partner on one of the two diagonals through the cell (and, for 'sees', in its room).
+      case 'sees':
+        if (((S.roomMask >> rj) & 1) === 0) return false;
+        // falls through
+      case 'diagonal': return (((S.diagA >> (r - c + N - 1)) | (S.diagB >> (r + c))) & 1) === 1;
       case 'roomNumberCompare': {
         const n = P.roomNum[rj];
         if (n == null) return false;

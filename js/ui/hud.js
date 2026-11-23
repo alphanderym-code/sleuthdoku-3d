@@ -1,6 +1,7 @@
 // DOM/HUD layer. No game logic: emits actions through a callback.
 import { cellName } from "../model/grid.js";
 import { objectInfo } from "../model/objects.js";
+import { weaponInfo } from "../model/weapons.js";
 
 export function fmtTime(s) {
   s = Math.max(0, Math.floor(s));
@@ -148,8 +149,10 @@ export class Hud {
         try { t = clueText(c, ch, puzzle); } catch { t = '...'; }
         return `<li>${richText(t)}</li>`;
       }).join('');
+      const wi = weaponInfo(ch.weapon);
+      const weapon = wi ? `<span class="weapon" title="Carries: ${esc(wi.label)}">${wi.emoji} ${esc(wi.label)}</span>` : '';
       el.innerHTML = `<img alt="" ${src ? `src="${src}"` : ''}>
-        <div><div class="nm"><span class="letter">${esc(ch.id)}</span>${esc(ch.name)}</div><ul class="clues">${clues}</ul></div>
+        <div><div class="nm"><span class="letter">${esc(ch.id)}</span>${esc(ch.name)}${weapon}</div><ul class="clues">${clues}</ul></div>
         <span class="placed"></span>`;
       el.title = `${ch.name} (${idx + 1})`;
       const pick = () => this.onAction('select', ch.id);

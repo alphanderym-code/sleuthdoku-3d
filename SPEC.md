@@ -37,11 +37,24 @@ These are REQUIRED for every generated or hand-made case.
    - `{ type: 'roomGenders', room }` → "There was a man and a woman in the Altar." (exactly 2 people, one m and one f)
    - `{ type: 'roomParity' }` → "Every even-numbered hole held an even number of people (zero counts), and every odd-numbered hole an odd number."
      Applies to every room with `roomInfo[k].number` (golf holes); the solver enforces it.
+   - `{ type: 'wound', wound }` and `{ type: 'witness', room }`: see 6b below.
 6. **Hints** read like a tutor, using chess-style coordinates (column letter a-p + row number, row 1 = top/north row; `cellName(r,c)`, e.g. `c2` = column c, row 2): "There's only one square beside the boulder for (D):
    d5." / "This isolates (C) in the last free square of column 5: e3." Last hint: "(V) was alone with (B): **Basil** is the murderer!"
 7. Phrasing: rows "top row" / "bottom row" / "third row"; columns "first column" / "last column" / "fifth column".
    Occupiable objects read naturally: "sitting in a chair", "on a bed", "on a sofa", "on a rug", "on a bench", "on a beach towel".
    For outdoor scenes say "area" instead of "room" in corner clues ("in a corner of her area").
+
+6b. **Weapon / witness notes** (v3; both only ever mention the victim indirectly, never the word "victim"):
+   - Every suspect carries one weapon (`character.weapon`, key of `js/model/weapons.js`: knife, letteropener, shears, pistol, crossbow, rope, scarf,
+     candlestick, wrench, hammer, golfclub, shovel, poison, syringe; picked by scene flavor, golf club only on the golf course). The victim has none.
+     Each weapon causes one wound (stabbed, shot, strangled, bludgeoned, poisoned); several suspects share a wound. The HUD card shows emoji + label.
+   - `{ type: 'wound', wound }` -> "Cause of death: **stabbing**." (also "a gunshot", "strangulation", "blunt force", "poison").
+     Semantics: the murderer (the one non-victim in the victim's room) carries a weapon with that wound. So any suspect whose weapon does not match
+     can never share the victim's room. The solver treats it as: no mismatching suspect may be placed in the victim's room.
+   - `{ type: 'witness', room }` -> "A scream was heard from the **Garden**." Semantics: the victim's room IS the named room, or SHARES A BORDER with it
+     (some cell of one is orthogonally adjacent to some cell of the other). `roomAdjacency(puzzle)` / `inWitnessZone` in clues.js. The solver also
+     restricts the victim's domain to the zone.
+   - A "weapon found in room X" note is NOT implemented (it would only duplicate `witness`).
 
 ### Clue types added in v2
 | type | fields | text |
@@ -58,6 +71,9 @@ These are REQUIRED for every generated or hand-made case.
 | `aloneWithGender` | `gender` | "She was **alone with a man**." (exactly 2 in room, the other has that gender; the other MAY be the victim) |
 | `rowOffset` | `of`, `delta` (owner row − other row; < 0 = north, > 0 = south) | "She was **exactly two rows north of** **Adaeze**." (generated at N ≥ 12) |
 | `roomNumberCompare` | `of`, `cmp` ∈ `higher|lower` | "He was in a **higher-numbered hole** than **Naveen**." Needs numbered rooms (`roomInfo[k].number`); false when either room is unnumbered. Noun comes from `puzzle.roomNoun` (default "room"/"area"). |
+| `besideCategory` | `category`, `v` (phrasing index) | "**Hugo** always stands beside **plants**." / "loves being beside", "cannot resist standing beside". Personality clue: the cell is orthogonally adjacent AND in the same room as ANY object whose type is in the category (same rule as `besideObject`). Categories (`js/model/categories.js`): food (oven, counter, table, register, campfire, barrel), plants (plant, flowers, tree, bush, haybale), water (water, shallows, bathtub, boat), screens (tv, arcade), animals (bear, lion, elephant, penguin, croc, shark). Text starts with the suspect's name (not a pronoun). |
+| `notBesideCategory` | `category`, `v` | "**Gary** never stands beside **food**." / "can't stand being beside", "keeps well away from", plus "is allergic to" (plants, animals), "is afraid of" (animals, water). Negation of `besideCategory`. |
+| `sees` | `who` | "She could **see** **Bruno**." Line of sight. Characters never share a row or column, so it is DIAGONAL: abs(dr) == abs(dc) > 0, WALLS BLOCK (every cell on the line, both ends included, lies in the same room), and no blocking object on a cell strictly between them. Occupiable objects (chairs, rugs...) do not block. Symmetric. `lineOfSight()` in clues.js; the solver prunes with room + diagonal masks (arc pruning). Negative "could not see anyone" is not implemented. |
 
 ## Extreme mode (16×16)
 - `difficulty: 'extreme'` (HUD: "Extreme (16×16)"; the size select is ignored) → N = 16: 15 suspects + the victim (initials A–O, V).
@@ -111,6 +127,7 @@ These are REQUIRED for every generated or hand-made case.
 ```
 - `id` of a character is ONE uppercase letter = first letter of its name, unique within the puzzle.
 - Exactly one character has `victim: true`.
+- Optional `weapon` (suspects only): key of `js/model/weapons.js`; used by the `wound` note.
 - `hairStyle` ∈ `short | long | bun | bald | curly | ponytail | spiky`; `accessory` ∈ `null | hat | glasses | beard | mustache | bowtie | scarf`.
 - FLOOR_TYPES: `wood | tile | grass | sand | stone | carpet | snow | checker | water | brick | dirt | fairway | green` (fairway/green = mown golf turf).
 
