@@ -68,11 +68,12 @@ const room = (name, floor, fill, items, o = {}) => ({ name, floor, fill, items, 
 
 // A numbered golf hole (the generator names it "Hole n" once numbers are dealt out).
 const hole = (tag, floor, fill, items) => room(`Hole ${tag}`, floor, fill, items, { numbered: true });
+const gate = (tag, floor, fill, items) => room(`Gate ${tag}`, floor, fill, items, { numbered: true });
 
 const OCC = new Set(['stool', 'chair', 'sofa', 'bed', 'rug', 'bench', 'towel', 'car', 'boat', 'bathtub',
-  'tee', 'flag', 'bunker', 'cart', 'shallows']);
+  'tee', 'flag', 'bunker', 'cart', 'shallows', 'carhorse', 'ferriscab', 'deckchair', 'liftchair']);
 
-// meta (optional, Extreme scenes): { minSize, extreme, roomCount: [lo, hi] (used at size >= 12),
+// meta (optional, Extreme scenes): { minSize, extreme, roomCount: [lo, hi] (used at size >= 10),
 //   numbered: rooms flagged numbered:true get numbers 1..M and name `${noun} n`, noun, parity: add the parity case note }
 function scene(key, title, outdoor, rooms, meta = {}) {
   const used = new Set();
@@ -234,6 +235,57 @@ export const SCENES = [
     room('Viewing Deck', 'wood', [0.2, 0.35], [it('bench', 2, 3, { wall: true }), table([1, 2], [1, 2]), it('plant', 2, 2), it('barrel')], { big: -1 }),
     room('Concessions', 'tile', [0.3, 0.45], [shop([2, 3], [1, 3]), table([1, 2], [1, 2], 2), it('barrel'), it('crate')], { big: -1 }),
   ], { minSize: 10, extreme: true, roomCount: [9, 10] }),
+  // ---- More large-board scenes (extreme: true; picked at random from size 10 up) ----
+  scene('park', 'Foul Play on the Giggle Gardens Midway', true, [
+    room('Carousel Court', 'brick', [0.3, 0.45], [must('carhorse', 4, 4), it('bench', 2, 2, { wall: true }), it('flowers', 2, 2), it('statue')], { big: 1 }),
+    room('Ferris Wheel Plaza', 'stone', [0.25, 0.4], [must('ferriscab', 3, 3), it('bench', 1, 2, { wall: true }), it('tree', 2, 2), it('barrel')]),
+    room('Funnel Cake Row', 'brick', [0.35, 0.5], [must('foodstall', 3, 4), table([1, 2], [1, 3]), it('barrel', 2, 2), it('crate')], { big: 1 }),
+    room('Bumper Car Arena', 'checker', [0.3, 0.45], [must('car', 3, 4), it('barrel', 2, 2), it('crate'), it('bench', 1, 2, { wall: true })]),
+    room('Haunted Mansion Ride', 'stone', [0.3, 0.45], [it('statue', 2, 2), it('piano'), it('wardrobe'), it('crate', 2, 2), it('barrel')], { big: -1 }),
+    room('Log Flume Lagoon', 'water', [0.3, 0.45], [must('boat', 2, 3), it('shallows', 2, 3, { size: [2, 4] }), it('boulder', 1, 2)], { big: 1 }),
+    room('Midway Games', 'dirt', [0.3, 0.45], [it('arcade', 2, 2), shop([1, 2], [1, 2]), it('foodstall'), it('barrel'), it('crate')]),
+    room('Main Gate', 'stone', [0.2, 0.35], [shop([1, 2], [1, 2]), it('flowers', 2, 2), it('bench', 1, 2, { wall: true }), it('statue')], { big: -1, always: true }),
+    room('Picnic Lawn', 'grass', [0.2, 0.35], [table([1, 2], [2, 3]), it('tree', 3, 3), it('flowers', 2, 2), it('tent'), it('towel')], { big: 1, always: true }),
+    room('Prize Pavilion', 'wood', [0.3, 0.45], [shop([2, 3], [1, 2]), it('shelf', 2, 2), it('plant', 2, 2), it('sofa')], { big: -1 }),
+  ], { minSize: 10, extreme: true, roomCount: [9, 10] }),
+  scene('cruise', 'Man Overboard on the S.S. Marmalade', true, [
+    room('Sun Deck', 'wood', [0.35, 0.5], [must('deckchair', 4, 5), it('towel', 2, 2), it('lifebuoy', 1, 2, { wall: true }), it('bench', 1, 2, { wall: true })], { big: 1 }),
+    room('Pool Deck', 'tile', [0.35, 0.5], [must('shallows', 3, 4, { size: [4, 6] }), it('deckchair', 2, 3), it('towel', 1, 2), it('lifebuoy'), it('plant', 1, 1)], { big: 1 }),
+    room("Captain's Bridge", 'wood', [0.25, 0.4], [must('desk', 1, 1, { seat: ['chair', [1, 1]] }), it('tv', 1, 2), it('shelf', 1, 1), it('wardrobe'), it('plant')], { big: -1 }),
+    room('Galley', 'tile', [0.35, 0.5], [must('oven'), it('counter', 1, 3, { size: [2, 3] }), it('shelf'), it('barrel', 2, 2), it('crate')], { big: -1 }),
+    room('Grand Dining Salon', 'carpet', [0.25, 0.4], [table([1, 2], [2, 3], 2), it('piano'), it('plant', 2, 2), rug(1)], { big: 1 }),
+    room('Royal Suite', 'carpet', [0.25, 0.4], [it('bed', 1, 1, { corner: true }), it('wardrobe'), it('desk', 1, 1, { seat: ['chair', [1, 1]] }), it('sofa', 1, 1), it('tv'), rug(2)], { big: -1 }),
+    room('Engine Room', 'stone', [0.3, 0.45], [it('heater', 2, 2), it('barrel', 3, 3), it('crate', 2, 2), it('boulder')]),
+    room('Lifeboat Station', 'wood', [0.3, 0.45], [it('boat', 2, 3), it('lifebuoy', 2, 2, { wall: true }), it('crate', 2, 2), it('barrel')]),
+    room('Casino Lounge', 'carpet', [0.3, 0.45], [it('arcade', 2, 2), table([1, 2], [1, 3], 2), shop([1, 2], [1, 2]), it('sofa', 1, 1)]),
+    room('Gangway Dock', 'brick', [0.2, 0.35], [it('bench', 2, 2, { wall: true }), it('crate', 2, 2), it('barrel'), it('lifebuoy')], { always: true, big: -1 }),
+    room('Bunk Cabin', 'wood', [0.3, 0.45], [it('bed', 1, 2, { corner: true, size: [1, 2] }), it('wardrobe'), it('shelf'), it('plant')], { big: -1 }),
+  ], { minSize: 10, extreme: true, roomCount: [9, 10] }),
+  scene('ski', 'Avalanche of Alibis at Mount Fondue', true, [
+    room('Bunny Slope', 'snow', [0.2, 0.35], [it('snowman', 3, 3), it('tree', 3, 4), it('boulder', 1, 2), it('towel')], { big: 1 }),
+    room('Summit Run', 'snow', [0.2, 0.35], [it('tree', 4, 4), it('boulder', 2, 2), it('snowman', 1, 1), it('bench', 1, 1)], { big: 1 }),
+    room('Lift Station', 'stone', [0.3, 0.45], [must('liftchair', 4, 4), it('heater', 1, 1), it('bench', 1, 2, { wall: true }), it('crate', 1, 2), it('barrel')]),
+    room('Grand Lodge', 'wood', [0.25, 0.4], [it('fireplace'), it('sofa', 2, 2), table([1, 2], [2, 3]), rug(2), it('piano'), it('plant')], { big: 1 }),
+    room('Apres-Ski Bar', 'wood', [0.3, 0.45], [shop([2, 3], [2, 3]), table([1, 2], [1, 2]), it('tv'), it('barrel', 2, 2)]),
+    room('Alpine Cabin', 'carpet', [0.25, 0.4], [it('bed', 1, 2, { corner: true, size: [1, 2] }), it('wardrobe'), it('fireplace'), rug(2), it('desk', 1, 1, { seat: ['chair', [1, 1]] })], { big: -1 }),
+    room('Ski Rental Shop', 'tile', [0.35, 0.5], [it('shelf', 3, 3), shop([1, 2], [1, 2]), it('bench', 1, 2, { wall: true }), it('crate', 2, 2), it('barrel')], { big: -1 }),
+    room('Snowman Meadow', 'snow', [0.25, 0.4], [it('snowman', 4, 4), it('tree', 2, 3), it('bush', 2, 2), it('flowers', 1, 1)], { big: 1, always: true }),
+    room('First-Aid Hut', 'tile', [0.25, 0.4], [it('bed', 1, 2, { corner: true, size: [1, 2] }), it('shelf'), it('desk', 1, 1, { seat: ['chair', [1, 1]] }), it('plant')], { big: -1 }),
+    room('Fondue Hut', 'brick', [0.3, 0.45], [must('oven'), shop([1, 2], [1, 2]), table([1, 2], [1, 3]), it('foodstall'), it('barrel', 2, 2)], { always: true, big: -1 }),
+  ], { minSize: 10, extreme: true, roomCount: [9, 10] }),
+  scene('airport', 'Last Call for Murder at Cloudport', false, [
+    gate('A', 'carpet', [0.3, 0.45], [it('bench', 3, 4, { size: [2, 3] }), it('luggage', 1, 2), it('plant', 1, 1), it('tv')]),
+    gate('B', 'tile', [0.3, 0.45], [it('bench', 3, 4, { size: [2, 3] }), it('plant', 2, 2), shop([1, 2], [1, 1])]),
+    gate('C', 'carpet', [0.3, 0.45], [it('bench', 3, 3, { size: [2, 3] }), it('luggage', 2, 2), it('tv', 1, 2), it('plant')]),
+    gate('D', 'tile', [0.3, 0.45], [it('bench', 3, 4, { size: [2, 3] }), it('luggage', 1, 1), shop([1, 2], [1, 2]), it('plant')]),
+    gate('E', 'carpet', [0.3, 0.45], [it('bench', 3, 3, { size: [2, 3] }), it('plant', 2, 2), it('luggage'), it('tv')]),
+    gate('F', 'tile', [0.3, 0.45], [it('bench', 3, 4, { size: [2, 3] }), it('luggage', 2, 2), it('tv'), it('plant')]),
+    room('Check-In Hall', 'tile', [0.25, 0.4], [shop([2, 3], [1, 2]), it('luggage', 3, 3), it('plant', 2, 2), it('bench', 1, 2, { wall: true })], { big: 1, always: true }),
+    room('Duty-Free Shop', 'carpet', [0.3, 0.45], [it('shelf', 3, 3), shop([2, 2], [1, 2]), it('plant', 2, 2), it('statue')], { big: -1 }),
+    room('Food Court', 'checker', [0.3, 0.45], [it('foodstall', 2, 3), table([1, 2], [1, 3], 2), shop([2, 3], [1, 3]), it('plant')], { big: 1, always: true }),
+    room('Baggage Claim', 'stone', [0.3, 0.45], [it('luggage', 4, 5), it('crate', 2, 2), it('barrel'), it('bench', 1, 2, { wall: true })]),
+    room('VIP Lounge', 'carpet', [0.25, 0.4], [it('sofa', 3, 3), it('tv', 1, 2), it('piano'), shop([1, 2], [1, 2]), it('plant', 2, 2), rug(2)], { big: -1 }),
+  ], { minSize: 10, extreme: true, roomCount: [9, 10], numbered: true, noun: 'gate' }),
 ];
 
 

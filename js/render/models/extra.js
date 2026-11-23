@@ -2,6 +2,7 @@
 // each fits a 1x1 cell, rests on y=0, front faces +z; outlines are added by the caller (createObject).
 // Occupiable types (tee, flag, bunker, cart, shallows) keep their middle clear so a figurine can stand on them.
 import * as THREE from 'three';
+import { EXTRA2_BUILDERS, EXTRA2_STAND } from './extra2.js';
 import { add, toon, toonOwn, shade, RB, BOX, CYL, SPH, ICO, CONE, TOR, CAPS } from './kit.js';
 
 const PI = Math.PI;
@@ -11,11 +12,13 @@ const T = { noOutline: true, shadow: false };
 export const EXTRA_STAND = {
   tee: { y: 0.03, dz: 0 }, flag: { y: 0.03, dz: 0.04 }, bunker: { y: 0.0, dz: 0 },
   cart: { y: 0.3, dz: 0.06 }, shallows: { y: 0.02, dz: 0 },
+  ...EXTRA2_STAND,
 };
 
 const GREEN = { turf: '#7fd47a', turfDark: '#5fb85f', sand: '#f2dca0', sandDark: '#dcc080', white: '#fffdf6', dark: '#3a3550', red: '#e06060' };
 
 const EXTRA_BUILDERS = {
+  ...EXTRA2_BUILDERS,
   // --- golf ---------------------------------------------------------------------------------
   tee(g, r) {
     add(g, RB(0.8, 0.04, 0.8, 0.05), GREEN.turf, { pos: [0, 0.02, 0] });

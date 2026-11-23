@@ -492,6 +492,27 @@ test('extreme 16x16: golf + zoo generate fast, unique, parity-correct', () => {
   }
 });
 
+test('large-board scenes (park, cruise, ski, airport): unique at 12 and 16, new types render-registered', () => {
+  for (const scene of ['park', 'cruise', 'ski', 'airport']) {
+    for (const [size, difficulty] of [[12, 'hard'], [16, 'extreme']]) {
+      const t0 = performance.now();
+      const p = generatePuzzle({ size, difficulty, seed: `big-${scene}`, scene });
+      const gen = performance.now() - t0;
+      assert.equal(p.size, size);
+      assert.equal(p.characters.length, size);
+      assert.equal(solve(p, { limit: 2 }).count, 1, `${scene} ${size} unique`);
+      for (const n of p.notes) assert.equal(evaluateNote(n, p.solution, p), true, `${scene} note ${n.type}`);
+      for (const o of p.objects) assert.ok(OBJECT_TYPES[o.type], `${scene}: object type ${o.type} registered`);
+      if (scene === 'airport') assert.ok(Object.values(p.roomInfo).some((i) => i.number != null && /^Gate /.test(i.name)), 'numbered gates');
+      assert.ok(gen < 2500, `${scene} ${size}: generation ${Math.round(gen)} ms`);
+      console.log(`       ${scene} ${size} ${difficulty}: gen ${Math.round(gen)} ms`);
+    }
+  }
+  // every large scene is flagged for random picks at size >= 10
+  for (const k of ['golf', 'zoo']) assert.ok(SCENES.find((s) => s.key === k).extreme);
+  for (const k of ['park', 'cruise', 'ski', 'airport']) assert.ok(SCENES.find((s) => s.key === k).extreme, `${k} extreme`);
+});
+
 console.log(`
 ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

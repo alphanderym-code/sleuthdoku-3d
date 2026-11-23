@@ -52,6 +52,15 @@ export const OBJECT_TYPES = {
   bunker:    { blocking: false, label: 'sand bunker', desc: 'A sand pit. Someone could be in it.' },
   cart:      { blocking: false, label: 'golf cart', desc: 'Parked, but someone could be riding.' },
   shallows:  { blocking: false, label: 'shallows', desc: 'Knee-deep water. Wading is allowed.' },
+  // Amusement park, cruise ship, ski resort, airport (large-board scenes)
+  carhorse:  { blocking: false, label: 'carousel horse', desc: 'A painted pony going nowhere. Someone could be riding.' },
+  ferriscab: { blocking: false, label: 'ferris wheel cabin', desc: 'A swaying cabin with room for a suspect.' },
+  foodstall: { blocking: true,  label: 'food stall', desc: 'Hot dogs and funnel cakes. Staff only behind it.' },
+  deckchair: { blocking: false, label: 'deck chair', desc: 'A striped lounger. Someone could be sunbathing.' },
+  lifebuoy:  { blocking: true,  label: 'lifebuoy', desc: 'A ring on a stand. Not for standing on.' },
+  liftchair: { blocking: false, label: 'ski lift chair', desc: 'Waiting for the next lift. Someone could be aboard.' },
+  snowman:   { blocking: true,  label: 'snowman', desc: 'Cold, round and absolutely immovable.' },
+  luggage:   { blocking: true,  label: 'luggage cart', desc: 'A trolley piled with suitcases.' },
 };
 
 export const FLOOR_TYPES = ['wood', 'tile', 'grass', 'sand', 'stone', 'carpet', 'snow', 'checker', 'water', 'brick', 'dirt', 'fairway', 'green'];

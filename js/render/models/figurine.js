@@ -205,9 +205,9 @@ export function createFigurine(character, weapon) {
   const weaponId = weapon !== undefined ? weapon : ch.weapon;
   if (weaponId && !victim) {
     const wp = createWeapon3d(weaponId, mats);
-    // Brandished out to the side (arm-local z -1.75 + arm sway ~0.55 = pointing outward, slightly up) and enlarged
-    // so the prop reads at board distance, including on 16x16.
-    wp.scale.setScalar(1.5); wp.position.set(0.01, -0.21, 0.05); wp.rotation.set(0.35, 0, -1.75);
+    // Brandished up and out (arm-local z -1.05 + arm sway ~0.55 = about 30 degrees off vertical, outside the body)
+    // and enlarged so the silhouette reads at the default board camera, including on 16x16.
+    wp.scale.setScalar(2.4); wp.position.set(0.02, -0.2, 0.07); wp.rotation.set(0.2, 0, -1.05);
     arms[1].add(wp);
   }  // (added after outlining; the prop outlines itself)
 

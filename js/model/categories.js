@@ -2,7 +2,7 @@
 // A category is a set of object types; "beside a category" = orthogonally adjacent AND in the same
 // room as ANY object of one of its types (same rule as 'besideObject').
 export const CATEGORIES = {
-  food:    { noun: 'food',    types: ['oven', 'counter', 'table', 'register', 'campfire', 'barrel'] },
+  food:    { noun: 'food',    types: ['oven', 'counter', 'table', 'register', 'campfire', 'barrel', 'foodstall'] },
   plants:  { noun: 'plants',  types: ['plant', 'flowers', 'tree', 'bush', 'haybale'] },
   water:   { noun: 'water',   types: ['water', 'shallows', 'bathtub', 'boat'] },
   screens: { noun: 'screens', types: ['tv', 'arcade'] },

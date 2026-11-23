@@ -47,7 +47,7 @@ let board = null;
 let state = null;
 // Debug handle for the browser console (read-only use recommended).
 if (new URLSearchParams(location.search).has('debug')) {
-  window.__sleuth = { get state() { return state; }, get board() { return board; } };
+  window.__sleuth = { get state() { return state; }, get board() { return board; }, load: (p) => loadPuzzle(p) };
 }
 
 if ('serviceWorker' in navigator) {

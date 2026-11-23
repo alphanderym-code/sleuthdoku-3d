@@ -73,6 +73,22 @@ const BUILDERS = {
     add(g, CYL(0.008, 0.012, 0.32, 8), m.steel, { pos: [0, 0.23, 0] });
     add(g, BOX(0.06, 0.05, 0.09), m.steel, { pos: [0, 0.4, 0.035], rot: [0.35, 0, 0] });
   },
+  mallet(g, m) {
+    add(g, CYL(0.016, 0.016, 0.3, 8), m.wood, { pos: [0, 0.14, 0] });
+    add(g, CYL(0.06, 0.06, 0.14, 12), m.red, { pos: [0, 0.34, 0], rot: [0, 0, PI / 2] });
+    for (const s of [-1, 1]) add(g, CYL(0.064, 0.064, 0.015, 12), m.gold, { pos: [s * 0.065, 0.34, 0], rot: [0, 0, PI / 2], ...T });
+  },
+  flaregun(g, m) {
+    add(g, BOX(0.04, 0.1, 0.05), m.red, { pos: [0, 0.02, 0], rot: [0.2, 0, 0] });
+    add(g, CYL(0.032, 0.032, 0.16, 10), m.red, { pos: [0, 0.14, 0.03] });
+    add(g, CYL(0.026, 0.026, 0.02, 10), m.flame, { pos: [0, 0.23, 0.03], ...T });
+  },
+  skipole(g, m) {
+    add(g, CYL(0.016, 0.016, 0.07, 8), m.dark, { pos: [0, 0.0, 0] });
+    add(g, CYL(0.009, 0.009, 0.36, 8), m.steel, { pos: [0, 0.2, 0] });
+    add(g, TOR(0.045, 0.008, 6, 12), m.dark, { pos: [0, 0.3, 0], rot: [PI / 2, 0, 0], ...T });
+    add(g, CONE(0.014, 0.06, 6), m.steel, { pos: [0, 0.41, 0] });
+  },
   shovel(g, m) {
     add(g, CYL(0.016, 0.016, 0.34, 8), m.wood, { pos: [0, 0.12, 0] });
     add(g, BOX(0.07, 0.016, 0.03), m.wood, { pos: [0, 0.3, 0], ...T });

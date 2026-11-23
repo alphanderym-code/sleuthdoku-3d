@@ -77,9 +77,9 @@ These are REQUIRED for every generated or hand-made case.
 
 ## Extreme mode (16×16)
 - `difficulty: 'extreme'` (HUD: "Extreme (16×16)"; the size select is ignored) → N = 16: 15 suspects + the victim (initials A–O, V).
-  1–2 clues per suspect plus 0–3 case notes. Scenes with `extreme: true` (`golf`, `zoo`) are used; other scenes are
+  1–2 clues per suspect plus 0–3 case notes. Scenes with `extreme: true` (`golf`, `zoo`, `park`, `cruise`, `ski`, `airport`) are used; every one of them is eligible at any size >= 10; other scenes are
   still available at any size via `scene:`; extreme scenes carry `minSize: 10`, so random picks at smaller sizes skip them.
-- Scene metadata (content.js `scene(key,title,outdoor,rooms,meta)`): `roomCount: [lo,hi]` (rooms at N ≥ 12), `numbered` (rooms flagged
+- Scene metadata (content.js `scene(key,title,outdoor,rooms,meta)`): `roomCount: [lo,hi]` (rooms at N ≥ 10), `numbered` (rooms flagged
   `numbered:true` become "Hole n"; numbers are dealt **after** the solution is placed so that each hole's head count has the parity
   of its number), `noun`, `parity` (adds the always-on `roomParity` case note).
 - Generation: strong start (room clue + row/column clue per suspect, always unique and fast to verify), then clues are
@@ -94,6 +94,18 @@ These are REQUIRED for every generated or hand-made case.
   keeps that name) + Clubhouse; fairway/green/grass floors with tee, flag, bunkers, water, trees, carts. `zoo`
   ("Mischief at Marigold Zoo"): Bear Den, Lion Savanna, Elephant Yard, Penguin Cove, Crocodile Swamp, Shark Tank, Main Plaza,
   Entrance, Viewing Deck, Concessions.
+- **More large-board scenes** (all `extreme: true, minSize: 10, roomCount: [9, 10]`; generated at 10-16 in ~1.0-1.9 s):
+  `park` ("Foul Play on the Giggle Gardens Midway", outdoor): Carousel Court, Ferris Wheel Plaza, Funnel Cake Row, Bumper Car Arena,
+  Haunted Mansion Ride, Log Flume Lagoon, Midway Games, Main Gate, Picnic Lawn, Prize Pavilion. `cruise` ("Man Overboard on the S.S.
+  Marmalade", outdoor): Sun Deck, Pool Deck, Captain's Bridge, Galley, Grand Dining Salon, Royal Suite, Engine Room, Lifeboat Station,
+  Casino Lounge, Gangway Dock, Bunk Cabin. `ski` ("Avalanche of Alibis at Mount Fondue", outdoor): Bunny Slope, Summit Run, Lift Station,
+  Grand Lodge, Apres-Ski Bar, Alpine Cabin, Ski Rental Shop, Snowman Meadow, First-Aid Hut, Fondue Hut. `airport` ("Last Call for Murder
+  at Cloudport", indoor, numbered `noun: 'gate'`, no parity note): Gates A-F (become "Gate n") + Check-In Hall, Duty-Free Shop, Food Court,
+  Baggage Claim, VIP Lounge (roomNumberCompare clues appear here).
+  - New occupiable types: `carhorse` (carousel horse), `ferriscab` (ferris wheel cabin), `deckchair`, `liftchair` (ski lift chair).
+    New blocking types: `foodstall` (category food), `lifebuoy`, `snowman`, `luggage` (luggage cart). Models in `js/render/models/extra2.js`
+    (merged into extra.js); fronted: foodstall, deckchair, liftchair, carhorse.
+  - New scene-only weapons: `mallet` (park, bludgeoned), `flaregun` (cruise, shot), `skipole` (ski, stabbed).
 - Rendering: `js/render/models/extra.js` (`buildExtra`, `EXTRA_STAND`); the camera fit (`_computeFit`) is size-generic (board half-width N/2).
 
 ## Coordinates

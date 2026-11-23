@@ -3,7 +3,7 @@
 
 export const FRONTED_TYPES = new Set([
   'fireplace', 'oven', 'tv', 'piano', 'desk', 'shelf', 'wardrobe', 'arcade', 'register', 'counter', 'heater',
-  'chair', 'sofa', 'bed', 'bench', 'tractor', 'car',
+  'chair', 'sofa', 'bed', 'bench', 'tractor', 'car', 'foodstall', 'deckchair', 'liftchair', 'carhorse',
 ]);
 
 export const FACING_DIRS = { n: [-1, 0], e: [0, 1], s: [1, 0], w: [0, -1] };
@@ -13,7 +13,7 @@ const SEAT_TARGETS = ['table', 'desk', 'counter'];
 const SOFA_TARGETS = ['tv', 'fireplace'];
 const BENCH_FEATURES = ['water', 'flowers', 'tree', 'table', 'fireplace', 'campfire', 'statue', 'plant', 'bush'];
 const BLOCKING_FRONT = new Set(['tree', 'bush', 'boulder', 'table', 'counter', 'oven', 'shelf', 'desk', 'plant', 'crate', 'statue',
-  'fireplace', 'piano', 'campfire', 'tent', 'tv', 'wardrobe', 'register', 'barrel', 'flowers', 'arcade', 'heater', 'water', 'haybale', 'tractor']);
+  'fireplace', 'piano', 'campfire', 'tent', 'tv', 'wardrobe', 'register', 'barrel', 'flowers', 'arcade', 'heater', 'water', 'haybale', 'tractor', 'foodstall', 'snowman', 'luggage']);
 
 // Score every direction for one object; returns the best direction.
 export function chooseFacing(puzzle, o, at) {

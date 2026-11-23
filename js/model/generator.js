@@ -185,7 +185,8 @@ const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const N8 = [...N4, [1, 1], [1, -1], [-1, 1], [-1, -1]];
 // Types that naturally come in big clumps (no cluster / per-room count limit).
 export const CLUSTER_OK = new Set(['water', 'flowers', 'haybale', 'tree', 'bush', 'rug', 'boat',
-  'bear', 'lion', 'elephant', 'penguin', 'croc', 'shark', 'shallows', 'bunker']);
+  'bear', 'lion', 'elephant', 'penguin', 'croc', 'shark', 'shallows', 'bunker',
+  'carhorse', 'deckchair', 'liftchair', 'foodstall', 'luggage', 'snowman']);
 export const MAX_CLUSTER = 2;
 
 function makeState(N, rooms, roomSize) {
