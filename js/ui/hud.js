@@ -90,7 +90,8 @@ export class Hud {
     if (!cases.length) list.innerHTML = '<p class="msg" style="color:var(--ink-soft)">No case files yet. Try a random case below!</p>';
   }
   getRandomOptions() {
-    return { size: +$('rnd-size').value, difficulty: $('rnd-diff').value };
+    const difficulty = $('rnd-diff').value;
+    return { size: difficulty === 'extreme' ? 16 : +$('rnd-size').value, difficulty }; // Extreme implies 16x16
   }
   setRandomBusy(busy) {
     const b = $('rnd-go');

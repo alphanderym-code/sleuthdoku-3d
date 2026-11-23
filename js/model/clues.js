@@ -24,6 +24,11 @@ export function clueOther(clue) {
   return clue.who ?? clue.of ?? clue.with ?? null;
 }
 
+// Room number of a numbered room (golf holes), or null.
+export function roomNumber(puzzle, room) {
+  return puzzle.roomInfo?.[room]?.number ?? null;
+}
+
 function besideObjectType(puzzle, p, type) {
   for (const o of puzzle.objects || []) {
     if (o.type === type && isBeside(puzzle, p, o)) return true;
@@ -123,6 +128,14 @@ export function evaluateClue(clue, charId, positions, puzzle) {
       const dr = Math.abs(p.r - q.r), dc = Math.abs(p.c - q.c);
       return dr === dc && dr > 0;
     }
+    // Exactly |delta| rows north (delta < 0) or south (delta > 0) of the other character.
+    case 'rowOffset': return p.r - q.r === clue.delta;
+    // "Higher / lower room number than the other character's room."
+    case 'roomNumberCompare': {
+      const a = roomNumber(puzzle, room), b = roomNumber(puzzle, roomAt(puzzle, q.r, q.c));
+      if (a == null || b == null) return false;
+      return clue.cmp === 'higher' ? a > b : a < b;
+    }
   }
   throw new Error(`Unknown clue type: ${clue.type}`);
 }
@@ -167,6 +180,18 @@ export function evaluateNote(note, positions, puzzle) {
       if (inside.length + unplaced < 2) return false;
       return unplaced ? null : true;
     }
+    case 'roomParity': {
+      // Every numbered room holds a number of people with the same parity as its number (zero is even).
+      const cnt = {};
+      for (const { p } of placed) { const k = roomAt(puzzle, p.r, p.c); cnt[k] = (cnt[k] || 0) + 1; }
+      let need = 0;
+      for (const k of Object.keys(puzzle.roomInfo || {})) {
+        const num = roomNumber(puzzle, k);
+        if (num != null && ((cnt[k] || 0) & 1) !== (num & 1)) need++;
+      }
+      if (need > unplaced) return false;
+      return unplaced ? null : true;
+    }
   }
   throw new Error(`Unknown note type: ${note.type}`);
 }
@@ -204,8 +229,13 @@ function roomName(puzzle, key) {
   return puzzle.roomInfo?.[key]?.name ?? key;
 }
 
+// "the **Kitchen**" / "**Hole 7**" (numbered rooms take no article).
+function theRoom(puzzle, key) {
+  return roomNumber(puzzle, key) != null ? `**${roomName(puzzle, key)}**` : `the **${roomName(puzzle, key)}**`;
+}
+
 // Mass nouns read better with "the": "beside the water" (never "beside a water").
-const MASS_NOUNS = new Set(['water']);
+const MASS_NOUNS = new Set(['water', 'shallows']);
 function besideNoun(type) {
   const label = objectLabel(type);
   return MASS_NOUNS.has(type) ? `the **${label}**` : `${article(label)} **${label}**`;
@@ -225,6 +255,11 @@ const ON_PHRASE = {
   bench: ['on a bench', 'on benches'],
   towel: ['on a beach towel', 'on beach towels'],
   stool: ['sitting on a stool', 'sitting on stools'],
+  tee: ['on a tee box', 'on tee boxes'],
+  flag: ['at a flag', 'at flags'],
+  bunker: ['in a sand bunker', 'in sand bunkers'],
+  cart: ['in a golf cart', 'in golf carts'],
+  shallows: ['in the shallows', 'in the shallows'],
   car: ['in a car', 'in cars'],
   boat: ['in a boat', 'in boats'],
   bathtub: ['in a bathtub', 'in bathtubs'],
@@ -240,6 +275,8 @@ function notOnPhrase(type) {
 }
 
 const areaWord = (puzzle) => (puzzle.outdoor ? 'area' : 'room');
+// Noun for numbered rooms ("hole"); puzzle.roomNoun, else the generic area word.
+const numberedWord = (puzzle) => puzzle.roomNoun || areaWord(puzzle);
 
 function rowsPhrase(indices, size) {
   const [a, b] = [...indices].sort((x, y) => x - y);
@@ -269,11 +306,11 @@ const possessiveOf = (character) => (character ? (character.gender === 'f' ? 'he
 // `character` (optional) lets corner clues say "her room".
 export function clueBody(clue, puzzle, character) {
   switch (clue.type) {
-    case 'inRoom': return `was in the **${roomName(puzzle, clue.room)}**`;
-    case 'notInRoom': return `was **not** in the **${roomName(puzzle, clue.room)}**`;
+    case 'inRoom': return `was in ${theRoom(puzzle, clue.room)}`;
+    case 'notInRoom': return `was **not** in ${theRoom(puzzle, clue.room)}`;
     case 'onObject': return `was **${onPhrase(clue.object)}**`;
     case 'notOnObject': return `was **${notOnPhrase(clue.object)}**`;
-    case 'onObjectInRoom': return `was **${onPhrase(clue.object)}** in the **${roomName(puzzle, clue.room)}**`;
+    case 'onObjectInRoom': return `was **${onPhrase(clue.object)}** in ${theRoom(puzzle, clue.room)}`;
     case 'besideObject': return `was **beside** ${besideNoun(clue.object)}`;
     case 'notBesideObject': return `was **not beside** ${besideNoun(clue.object)}`;
     case 'besidePerson': return `was **beside** **${charName(puzzle, clue.who)}**`;
@@ -286,9 +323,15 @@ export function clueBody(clue, puzzle, character) {
       const base = `was **${dirPhrase(clue)}** **${charName(puzzle, clue.of)}**`;
       return clue.otherRoom ? `${base}, in a different ${areaWord(puzzle)}` : base;
     }
+    case 'rowOffset': {
+      const dir = clue.delta < 0 ? 'north' : 'south';
+      return `was **${dirPhrase({ dir, dist: Math.abs(clue.delta) })}** **${charName(puzzle, clue.of)}**`;
+    }
+    case 'roomNumberCompare':
+      return `was in a **${clue.cmp === 'higher' ? 'higher' : 'lower'}-numbered ${numberedWord(puzzle)}** than **${charName(puzzle, clue.of)}**`;
     case 'diagonal': return `was on a **diagonal with** **${charName(puzzle, clue.with)}**`;
     case 'alone': return 'was **alone**';
-    case 'aloneInRoom': return `was **alone in the** **${roomName(puzzle, clue.room)}**`;
+    case 'aloneInRoom': return (roomNumber(puzzle, clue.room) != null ? `was **alone in** ${theRoom(puzzle, clue.room)}` : `was **alone in the** **${roomName(puzzle, clue.room)}**`);
     case 'aloneWith': return `was **alone with** **${charName(puzzle, clue.who)}**`;
     case 'aloneWithGender': return `was **alone with ${clue.gender === 'f' ? 'a woman' : 'a man'}**`;
     case 'withSomeoneBeside': return `was **with someone who was beside ${MASS_NOUNS.has(clue.object) ? `the ${objectLabel(clue.object)}` : objPhrase(clue.object)}**`;
@@ -323,7 +366,11 @@ export function noteText(note, puzzle) {
       if (note.count === 1) return `There was **exactly one empty ${w}**.`;
       return `There were **exactly ${numberWord(note.count)} empty ${w}s**.`;
     }
-    case 'roomGenders': return `There was **a man and a woman** in the **${roomName(puzzle, note.room)}**.`;
+    case 'roomParity': {
+      const w = numberedWord(puzzle);
+      return `Every **even-numbered** ${w} held an **even** number of people (zero counts), and every **odd-numbered** ${w} an **odd** number.`;
+    }
+    case 'roomGenders': return `There was **a man and a woman** in ${theRoom(puzzle, note.room)}.`;
   }
   throw new Error(`Unknown note type: ${note.type}`);
 }

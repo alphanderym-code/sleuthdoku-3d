@@ -66,14 +66,20 @@ const shop = (size, stools, o = {}) => it('counter', 1, 3, { size, extra: 'regis
 const rug = (w = 2, size = [2, 3]) => it('rug', 1, w, { size });
 const room = (name, floor, fill, items, o = {}) => ({ name, floor, fill, items, ...o });
 
-const OCC = new Set(['stool', 'chair', 'sofa', 'bed', 'rug', 'bench', 'towel', 'car', 'boat', 'bathtub']);
+// A numbered golf hole (the generator names it "Hole n" once numbers are dealt out).
+const hole = (tag, floor, fill, items) => room(`Hole ${tag}`, floor, fill, items, { numbered: true });
 
-function scene(key, title, outdoor, rooms) {
+const OCC = new Set(['stool', 'chair', 'sofa', 'bed', 'rug', 'bench', 'towel', 'car', 'boat', 'bathtub',
+  'tee', 'flag', 'bunker', 'cart', 'shallows']);
+
+// meta (optional, Extreme scenes): { minSize, extreme, roomCount: [lo, hi] (used at size >= 12),
+//   numbered: rooms flagged numbered:true get numbers 1..M and name `${noun} n`, noun, parity: add the parity case note }
+function scene(key, title, outdoor, rooms, meta = {}) {
   const used = new Set();
   for (const rm of rooms) for (const i of rm.items) { used.add(i.t); if (i.seat) used.add(i.seat[0]); if (i.extra) used.add(i.extra); }
   const list = [...used];
   return {
-    key, title, outdoor, rooms,
+    key, title, outdoor, rooms, ...meta,
     // Derived unions (informational / tests); placement uses the per-room recipes.
     blocking: list.filter((t) => !OCC.has(t)),
     occupiable: list.filter((t) => OCC.has(t)),
@@ -203,6 +209,31 @@ export const SCENES = [
     room('Pond', 'water', [0.1, 0.25], [must('boat', 1, 2)], { always: true, flood: 'water' }),
     room('Orchard', 'grass', [0.25, 0.4], [it('tree', 5, 5), it('bush', 2, 2), it('towel'), it('flowers')], { big: 1 }),
   ]),
+  // ---- Extreme scenes (designed for 16x16; usable at any size, picked at random only from size 10 up) ----
+  scene('golf', 'Fore! Foul Play at Birdie Hollow', true, [
+    hole('A', 'fairway', [0.3, 0.45], [must('tee'), must('flag'), it('bunker', 2, 3, { size: [1, 2] }), it('tree', 3, 4), it('water', 1, 1, { size: [2, 3] })]),
+    hole('B', 'green', [0.3, 0.45], [must('tee'), must('flag'), it('bunker', 3, 3, { size: [1, 3] }), it('bush', 2, 2), it('cart', 1, 1)]),
+    hole('C', 'fairway', [0.25, 0.4], [must('tee'), must('flag'), it('water', 2, 3, { size: [2, 4] }), it('tree', 2, 3), it('bunker', 1, 2)]),
+    hole('D', 'grass', [0.3, 0.45], [must('tee'), must('flag'), it('tree', 4, 5), it('boulder', 1, 1), it('cart', 1, 2)]),
+    hole('E', 'fairway', [0.3, 0.45], [must('tee'), must('flag'), it('bunker', 3, 3, { size: [2, 3] }), it('tree', 2, 2), it('bush', 1, 1)]),
+    hole('F', 'green', [0.25, 0.4], [must('tee'), must('flag'), it('water', 2, 2, { size: [3, 4] }), it('bunker', 1, 2), it('flowers', 1, 1)]),
+    hole('G', 'grass', [0.3, 0.45], [must('tee'), must('flag'), it('bunker', 2, 2), it('tree', 3, 4), it('cart', 1, 2), it('bush', 1, 1)]),
+    hole('H', 'fairway', [0.3, 0.45], [must('tee'), must('flag'), it('water', 1, 2, { size: [2, 3] }), it('bunker', 2, 2), it('tree', 2, 3)]),
+    hole('I', 'green', [0.3, 0.45], [must('tee'), must('flag'), it('tree', 3, 3), it('bunker', 2, 3, { size: [1, 2] }), it('boulder', 1, 1)]),
+    room('Clubhouse', 'wood', [0.25, 0.4], [table([1, 2], [1, 3], 2), shop([2, 3], [1, 2]), it('sofa', 1, 1), it('plant', 2, 2), it('shelf', 1, 1), it('cart', 1, 1, { wall: false })], { always: true, big: -1 }),
+  ], { minSize: 10, extreme: true, roomCount: [9, 10], numbered: true, noun: 'hole', parity: true }),
+  scene('zoo', 'Mischief at Marigold Zoo', true, [
+    room('Bear Den', 'grass', [0.35, 0.5], [must('bear', 3, 4), it('boulder', 2, 2), it('tree', 2, 3), it('shallows', 1, 2, { size: [2, 4] })], { big: 1 }),
+    room('Lion Savanna', 'dirt', [0.35, 0.5], [must('lion', 3, 4), it('bush', 2, 3), it('boulder', 2, 2), it('tree', 1, 1)], { big: 1 }),
+    room('Elephant Yard', 'dirt', [0.3, 0.45], [must('elephant', 2, 3), it('haybale', 2, 2), it('boulder', 1, 2), it('shallows', 1, 2, { size: [2, 4] })], { big: 1 }),
+    room('Penguin Cove', 'snow', [0.35, 0.5], [must('penguin', 3, 5), it('boulder', 2, 2), it('shallows', 2, 2, { size: [2, 4] })]),
+    room('Crocodile Swamp', 'grass', [0.35, 0.5], [must('croc', 2, 3), it('tree', 2, 3), it('bush', 1, 2), it('shallows', 2, 2, { size: [3, 5] })]),
+    room('Shark Tank', 'water', [0.3, 0.45], [must('shark', 2, 3), it('shallows', 2, 3, { size: [3, 5] }), it('boulder', 1, 1)], { big: 1 }),
+    room('Main Plaza', 'brick', [0.2, 0.35], [it('bench', 2, 3, { wall: true }), it('tree', 3, 3), it('flowers', 2, 2), it('statue'), table([1, 2], [1, 3])], { big: 1, always: true }),
+    room('Entrance', 'stone', [0.2, 0.35], [shop([1, 2], [1, 2]), it('plant', 2, 2), it('flowers'), it('bench', 1, 2, { wall: true })], { big: -1, always: true }),
+    room('Viewing Deck', 'wood', [0.2, 0.35], [it('bench', 2, 3, { wall: true }), table([1, 2], [1, 2]), it('plant', 2, 2), it('barrel')], { big: -1 }),
+    room('Concessions', 'tile', [0.3, 0.45], [shop([2, 3], [1, 3]), table([1, 2], [1, 2], 2), it('barrel'), it('crate')], { big: -1 }),
+  ], { minSize: 10, extreme: true, roomCount: [9, 10] }),
 ];
 
 

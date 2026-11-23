@@ -4,6 +4,7 @@ import {
   add, addVC, addMerged, toon, toonOwn, texToon, rng, shade, mix,
   RB, BOX, CYL, SPH, ICO, CONE, TOR, CAPS,
 } from './kit.js';
+import { buildExtra, hasExtra, EXTRA_STAND } from './extra.js';
 
 const PI = Math.PI;
 const C = {
@@ -21,9 +22,28 @@ const STAND = {
   rug: { y: 0.025, dz: 0 }, bench: { y: 0.22, dz: 0 }, towel: { y: 0.02, dz: 0 }, stool: { y: 0.5, dz: 0 },
   car: { y: 0.34, dz: -0.02 }, boat: { y: 0.25, dz: 0 }, bathtub: { y: 0.53, dz: 0 },
 };
-export function standInfo(type) { return STAND[type] || { y: 0, dz: 0 }; }
+export function standInfo(type) { return STAND[type] || EXTRA_STAND[type] || { y: 0, dz: 0 }; }
 
 const flameMat = (c, i = 0.9) => toon(c, { emissive: c, emissiveIntensity: i });
+/** Rising steam puffs: one translucent material, scale/position only (no per-frame allocation). Returns update(t). */
+function makeSteam(g, x, y, z, ph, n, rise, size) {
+  const m = toonOwn('#ffffff'); m.transparent = true; m.opacity = 0.5; m.depthWrite = false;
+  const puffs = [];
+  for (let i = 0; i < n; i++) puffs.push(add(g, SPH(size, 6, 5), m, { pos: [x, y, z], ...T }));
+  return (t) => {
+    for (let i = 0; i < n; i++) {
+      const u = (t * 0.3 + i / n + ph) % 1;
+      puffs[i].position.set(x + Math.sin(i * 2.3 + u * 3) * 0.04, y + u * rise, z + Math.cos(i * 1.9 + u * 3) * 0.04);
+      puffs[i].scale.setScalar(Math.max(0.001, Math.sin(u * PI) * (0.6 + 0.9 * u)));
+    }
+  };
+}
+/** Two stepped, additive-looking glow discs on the floor (toon-style firelight); returns update(k). */
+function makeFireGlow(g, x, y, z, rad) {
+  const mats = [0, 1].map((i) => new THREE.MeshBasicMaterial({ color: i ? '#ffd27a' : '#ff9a3c', transparent: true, opacity: 0.16, depthWrite: false, toneMapped: false }));
+  const discs = mats.map((m, i) => add(g, new THREE.CircleGeometry(rad * (i ? 0.55 : 1), 24), m, { pos: [x, y + i * 0.001, z], rot: [-PI / 2, 0, 0], ...T }));
+  return (k) => { mats[0].opacity = 0.13 + 0.05 * k; mats[1].opacity = 0.16 + 0.07 * k; discs[0].scale.setScalar(1 + 0.04 * k); };
+}
 /** Four-way symmetric leg positions helper. */
 const legs4 = (x, z) => [[-x, -z], [x, -z], [-x, z], [x, z]];
 const pick = (r, arr) => arr[Math.floor(r() * arr.length) % arr.length];
@@ -214,7 +234,8 @@ const BUILDERS = {
     add(g, RB(0.52, 0.2, 0.02, 0.02), win, { pos: [0, 0.28, 0.393], ...T });
     add(g, CAPS(0.014, 0.48, 3, 6), C.metal, { pos: [0, 0.455, 0.42], rot: [0, 0, PI / 2], noOutline: true });
     for (const sx of [-1, 1]) add(g, CYL(0.01, 0.01, 0.04, 6), C.metal, { pos: [sx * 0.24, 0.455, 0.4], rot: [PI / 2, 0, 0], ...T });
-    g.userData.idle = (t) => { win.emissiveIntensity = 0.4 + 0.12 * Math.sin(t * 2.6 + ph) + 0.05 * Math.sin(t * 7 + ph); };
+    const steam = makeSteam(g, -0.2, 0.86, -0.17, ph, 3, 0.32, 0.045);
+    g.userData.idle = (t) => { win.emissiveIntensity = 0.4 + 0.12 * Math.sin(t * 2.6 + ph) + 0.05 * Math.sin(t * 7 + ph); steam(t); };
   },
 
   shelf(g, r) {
@@ -387,11 +408,16 @@ const BUILDERS = {
     add(g, RB(0.26, 0.17, 0.025, 0.01, 1), C.woodDeep, { pos: [0, 0.89, -0.2] });
     add(g, new THREE.PlaneGeometry(0.2, 0.11), toon('#8fd3a8'), { pos: [0, 0.89, -0.186], ...T });
     add(g, CONE(0.04, 0.05, 3), toon('#5a9a6a'), { pos: [0.02, 0.88, -0.185], ...T });
+    const glow = makeFireGlow(g, 0, 0.006, 0.22, 0.42);
     g.userData.idle = (t) => {
-      flames.forEach((f, i) => {
+      for (let i = 0; i < flames.length; i++) {
+        const f = flames[i];
         const k = 1 + 0.14 * Math.sin(t * 11 + i * 2.1 + ph) + 0.07 * Math.sin(t * 23 + i);
-        f.scale.set(1 / Math.sqrt(k), k, 1 / Math.sqrt(k)); f.position.y = base[i] + (k - 1) * 0.1;
-      });
+        const q = 1 / Math.sqrt(k);
+        f.scale.set(q, k, q); f.position.y = base[i] + (k - 1) * 0.1;
+        f.rotation.z = 0.06 * Math.sin(t * 7 + i * 1.7 + ph);
+      }
+      glow(Math.sin(t * 11 + ph) * 0.6 + Math.sin(t * 23) * 0.4);
     };
   },
 
@@ -444,16 +470,22 @@ const BUILDERS = {
     ];
     const base = flames.map((f) => f.position.y);
     const sparks = [0, 1, 2, 3].map(() => add(g, SPH(0.014, 5, 4), flameMat(C.flameY, 1.5), { ...T }));
+    const glow = makeFireGlow(g, 0, 0.02, 0, 0.7);
     g.userData.idle = (t) => {
-      flames.forEach((f, i) => {
+      for (let i = 0; i < flames.length; i++) {
+        const f = flames[i];
         const k = 1 + 0.14 * Math.sin(t * 11 + i * 2.1 + ph) + 0.07 * Math.sin(t * 23 + i);
-        f.scale.set(1 / Math.sqrt(k), k, 1 / Math.sqrt(k)); f.position.y = base[i] + (k - 1) * 0.12;
-      });
-      sparks.forEach((s, i) => {
+        const q = 1 / Math.sqrt(k);
+        f.scale.set(q, k, q); f.position.y = base[i] + (k - 1) * 0.12;
+        f.rotation.z = 0.06 * Math.sin(t * 7 + i * 1.7 + ph);
+      }
+      for (let i = 0; i < sparks.length; i++) {
+        const s = sparks[i];
         const u = ((t * 0.5 + i * 0.27 + ph) % 1);
         s.position.set(Math.sin(i * 2.4 + u * 3) * 0.12, 0.3 + u * 0.5, Math.cos(i * 1.7 + u * 3) * 0.12);
-        s.scale.setScalar(1 - u);
-      });
+        s.scale.setScalar(Math.max(0.001, 1 - u));
+      }
+      glow(Math.sin(t * 11 + ph) * 0.6 + Math.sin(t * 23) * 0.4);
     };
   },
 
@@ -662,7 +694,8 @@ const BUILDERS = {
     add(g, TOR(0.1, 0.012, 5, 12), '#6a6880', { pos: [0.37, 0.12, 0.28], rot: [PI / 2, 0, 0], ...T });
     add(g, CYL(0.085, 0.085, 0.01, 12), '#7fc4e8', { pos: [0.37, 0.15, 0.28], ...T });
     add(g, CAPS(0.012, 0.3, 3, 6), C.woodLight, { pos: [0.37, 0.2, 0.28], rot: [0.2, 0, 0.9], noOutline: true });
-    g.userData.idle = (t) => { fm.emissiveIntensity = 0.8 + 0.25 * Math.sin(t * 3.1 + ph) + 0.1 * Math.sin(t * 8 + ph); };
+    const steam = makeSteam(g, -0.05, 0.66, 0, ph, 4, 0.4, 0.06);
+    g.userData.idle = (t) => { fm.emissiveIntensity = 0.8 + 0.25 * Math.sin(t * 3.1 + ph) + 0.1 * Math.sin(t * 8 + ph); steam(t); };
   },
 
   water(g, r, ph) {
@@ -677,7 +710,8 @@ const BUILDERS = {
       add(g, CYL(0.1, 0.1, 0.012, 10), '#4fae5a', { pos: [x, 0.012, z], ...T });
       add(g, SPH(0.03, 6, 4), '#ff9ac0', { pos: [x + 0.02, 0.03, z], scale: [1, 0.7, 1], ...T });
     }
-    g.userData.idle = (t) => { g.children.forEach((m) => { if (m.userData.ph !== undefined) { const s = 1 + 0.12 * Math.sin(t * 1.2 + m.userData.ph); m.scale.set(s, s, 1); } }); };
+    const rings = g.children.filter((m) => m.userData.ph !== undefined);
+    g.userData.idle = (t) => { for (let i = 0; i < rings.length; i++) { const m = rings[i]; const s = 1 + 0.12 * Math.sin(t * 1.2 + m.userData.ph); m.scale.set(s, s, 1); } };
   },
 
   haybale(g, r) {
@@ -783,6 +817,7 @@ const BUILDERS = {
 
 export function buildObject(type, g, seed) {
   const b = BUILDERS[type];
+  if (!b && hasExtra(type)) { buildExtra(type, g, rng(seed), (seed % 1000) / 1000 * PI * 2); return true; }
   if (!b) { add(g, RB(0.5, 0.5, 0.5, 0.06), '#cccccc', { pos: [0, 0.25, 0] }); return false; }
   const r = rng(seed);
   b(g, r, (seed % 1000) / 1000 * PI * 2);

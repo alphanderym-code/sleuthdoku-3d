@@ -28,6 +28,13 @@ export const OBJECT_TYPES = {
   water:     { blocking: true,  label: 'water', desc: 'Wet. Nobody is paddling here.' },       // open water tile (lake); rendered by the water floor
   haybale:   { blocking: true,  label: 'hay bale', desc: 'Itchy and stacked. Skip it.' },
   tractor:   { blocking: true,  label: 'tractor', desc: 'Big, green, and parked in the way.' },
+  // Zoo animals: one blocking type per species so clues can say "beside a bear". (Extreme scenes)
+  bear:      { blocking: true,  label: 'bear', desc: 'Big, fuzzy, and not sharing the spot.' },
+  lion:      { blocking: true,  label: 'lion', desc: 'The king of this square. Keep out.' },
+  elephant:  { blocking: true,  label: 'elephant', desc: 'Far too large to stand on, or beside.' },
+  penguin:   { blocking: true,  label: 'penguin', desc: 'Waddling in place. Square taken.' },
+  croc:      { blocking: true,  label: 'crocodile', desc: 'Snappy. Nobody stands here.' },
+  shark:     { blocking: true,  label: 'shark', desc: 'A fin circles this tank square.' },
   // occupiable
   stool:     { blocking: false, label: 'stool', desc: 'A small perch. Someone could sit here.' },
   car:       { blocking: false, label: 'car', desc: 'Parked, but someone could be inside.' },
@@ -39,9 +46,15 @@ export const OBJECT_TYPES = {
   rug:       { blocking: false, label: 'rug', desc: 'Soft floor decor. Stand on it freely.' },
   bench:     { blocking: false, label: 'bench', desc: 'Room to sit or stand.' },
   towel:     { blocking: false, label: 'beach towel', desc: 'A beach spot. Anyone can lounge here.' },
+  // Golf + zoo (Extreme scenes). Occupiable water is `shallows`; plain `water` stays blocking.
+  tee:       { blocking: false, label: 'tee box', desc: 'Where a hole begins. Stand here freely.' },
+  flag:      { blocking: false, label: 'flag', desc: 'The pin on the green. Someone could be here.' },
+  bunker:    { blocking: false, label: 'sand bunker', desc: 'A sand pit. Someone could be in it.' },
+  cart:      { blocking: false, label: 'golf cart', desc: 'Parked, but someone could be riding.' },
+  shallows:  { blocking: false, label: 'shallows', desc: 'Knee-deep water. Wading is allowed.' },
 };
 
-export const FLOOR_TYPES = ['wood', 'tile', 'grass', 'sand', 'stone', 'carpet', 'snow', 'checker', 'water', 'brick', 'dirt'];
+export const FLOOR_TYPES = ['wood', 'tile', 'grass', 'sand', 'stone', 'carpet', 'snow', 'checker', 'water', 'brick', 'dirt', 'fairway', 'green'];
 
 export function isBlockingType(type) {
   return !!OBJECT_TYPES[type]?.blocking;

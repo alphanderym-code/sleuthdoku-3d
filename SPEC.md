@@ -4,7 +4,7 @@ An original 3D murder-mystery logic puzzle game. Original name, characters, scen
 Rules are a classic grid-deduction genre: place every character on a grid using clues; find the murderer.
 
 ## Game rules
-- Grid is N×N (N = 5..9). There are exactly N characters: N-1 suspects + 1 victim.
+- Grid is N×N (N = 5..9; **Extreme** mode is N = 16, see below). There are exactly N characters: N-1 suspects + 1 victim.
 - Exactly **one character per row and one per column**.
 - The grid is split into **rooms** (contiguous irregular regions with names).
 - Cells can hold **objects**. *Blocking* objects (tree, table…) cannot be occupied. *Occupiable* objects (chair, rug…) can.
@@ -35,6 +35,8 @@ These are REQUIRED for every generated or hand-made case.
    - `{ type: 'noEmptyRoom' }` → "There was no empty room."
    - `{ type: 'emptyRooms', count }` → "There were exactly two empty rooms."
    - `{ type: 'roomGenders', room }` → "There was a man and a woman in the Altar." (exactly 2 people, one m and one f)
+   - `{ type: 'roomParity' }` → "Every even-numbered hole held an even number of people (zero counts), and every odd-numbered hole an odd number."
+     Applies to every room with `roomInfo[k].number` (golf holes); the solver enforces it.
 6. **Hints** read like a tutor, using chess-style coordinates (column letter a-p + row number, row 1 = top/north row; `cellName(r,c)`, e.g. `c2` = column c, row 2): "There's only one square beside the boulder for (D):
    d5." / "This isolates (C) in the last free square of column 5: e3." Last hint: "(V) was alone with (B): **Basil** is the murderer!"
 7. Phrasing: rows "top row" / "bottom row" / "third row"; columns "first column" / "last column" / "fifth column".
@@ -54,6 +56,29 @@ These are REQUIRED for every generated or hand-made case.
 | `columnOneOf` / `rowOneOf` | `indices: [a,b]` | "He was in the **first or second column**." |
 | `withSomeoneBeside` | `object` | "She was **with someone who was beside a tree**." (shares room with ≥1 other person who is beside one) |
 | `aloneWithGender` | `gender` | "She was **alone with a man**." (exactly 2 in room, the other has that gender; the other MAY be the victim) |
+| `rowOffset` | `of`, `delta` (owner row − other row; < 0 = north, > 0 = south) | "She was **exactly two rows north of** **Adaeze**." (generated at N ≥ 12) |
+| `roomNumberCompare` | `of`, `cmp` ∈ `higher|lower` | "He was in a **higher-numbered hole** than **Naveen**." Needs numbered rooms (`roomInfo[k].number`); false when either room is unnumbered. Noun comes from `puzzle.roomNoun` (default "room"/"area"). |
+
+## Extreme mode (16×16)
+- `difficulty: 'extreme'` (HUD: "Extreme (16×16)"; the size select is ignored) → N = 16: 15 suspects + the victim (initials A–O, V).
+  1–2 clues per suspect plus 0–3 case notes. Scenes with `extreme: true` (`golf`, `zoo`) are used; other scenes are
+  still available at any size via `scene:`; extreme scenes carry `minSize: 10`, so random picks at smaller sizes skip them.
+- Scene metadata (content.js `scene(key,title,outdoor,rooms,meta)`): `roomCount: [lo,hi]` (rooms at N ≥ 12), `numbered` (rooms flagged
+  `numbered:true` become "Hole n"; numbers are dealt **after** the solution is placed so that each hole's head count has the parity
+  of its number), `noun`, `parity` (adds the always-on `roomParity` case note).
+- Generation: strong start (room clue + row/column clue per suspect, always unique and fast to verify), then clues are
+  weakened one at a time (drop the second clue / swap for a weaker true clue) while the solver still proves uniqueness
+  (`nodeLimit` 8000), for ~0.9 s. Typical generation 0.7–1.5 s, worst seen < 2 s. No logic-profile (hint replay) at 16×16.
+- **New object types** (js/model/objects.js, `OBJECT_TYPES`):
+  - occupiable: `tee` (tee box), `flag` (pin on the green), `bunker` (sand pit), `cart` (golf cart), `shallows` (occupiable water: "in the shallows").
+    The existing `water` type is unchanged (blocking; old scenes).
+  - blocking animals, one type per species so clues can say "beside a bear": `bear`, `lion`, `elephant`, `penguin`, `croc` (label "crocodile"), `shark`.
+  - Clue phrases: tee "on a tee box", flag "at a flag", bunker "in a sand bunker", cart "in a golf cart", shallows "in the shallows".
+- **Scenes**: `golf` ("Fore! Foul Play at Birdie Hollow"): 9 hole recipes (named "Hole A".."Hole I" internally; `roomInfo[k].recipe`
+  keeps that name) + Clubhouse; fairway/green/grass floors with tee, flag, bunkers, water, trees, carts. `zoo`
+  ("Mischief at Marigold Zoo"): Bear Den, Lion Savanna, Elephant Yard, Penguin Cove, Crocodile Swamp, Shark Tank, Main Plaza,
+  Entrance, Viewing Deck, Concessions.
+- Rendering: `js/render/models/extra.js` (`buildExtra`, `EXTRA_STAND`); the camera fit (`_computeFit`) is size-generic (board half-width N/2).
 
 ## Coordinates
 - `r` = row, 0 = north (top / far side of the board). `c` = column, 0 = west (left).
@@ -65,10 +90,12 @@ These are REQUIRED for every generated or hand-made case.
 {
   id: 'midnight-bakery',            // unique string
   title: 'The Midnight Bakery',
-  difficulty: 'very-easy' | 'easy' | 'medium' | 'hard',
+  difficulty: 'very-easy' | 'easy' | 'medium' | 'hard' | 'extreme',
   size: 5,
   rooms: ['KKKSS','KKKSS','KOOOS','FFOOS','FFOOO'],   // N strings of N chars, one char = room key
-  roomInfo: { K: { name: 'Kitchen', floor: 'tile' }, ... },  // floor ∈ FLOOR_TYPES
+  roomInfo: { K: { name: 'Kitchen', floor: 'tile' }, ... },  // floor ∈ FLOOR_TYPES; optional number (golf holes: { name: 'Hole 3', number: 3 })
+  roomNoun: 'hole',                 // optional: noun for numbered rooms in clue / note text
+  notes: [ { type: 'roomParity' } ],  // optional case notes
   objects: [ { type: 'oven', r: 0, c: 0, facing: 's' }, ... ],  // type ∈ keys of OBJECT_TYPES (js/model/objects.js);
                                                                // optional facing 'n'|'e'|'s'|'w' (n = row r-1, e = col c+1) for objects with a front
                                                                // (see js/model/facing.js; filled by the generator / assignFacing at load for curated cases)
@@ -85,7 +112,7 @@ These are REQUIRED for every generated or hand-made case.
 - `id` of a character is ONE uppercase letter = first letter of its name, unique within the puzzle.
 - Exactly one character has `victim: true`.
 - `hairStyle` ∈ `short | long | bun | bald | curly | ponytail | spiky`; `accessory` ∈ `null | hat | glasses | beard | mustache | bowtie | scarf`.
-- FLOOR_TYPES: `wood | tile | grass | sand | stone | carpet | snow | checker`.
+- FLOOR_TYPES: `wood | tile | grass | sand | stone | carpet | snow | checker | water | brick | dirt | fairway | green` (fairway/green = mown golf turf).
 
 ### Clue objects
 | type | fields | meaning / text example |
@@ -127,7 +154,7 @@ js/puzzles/cases.js   generator agent (phase 2: hand-made cases)
 js/data/content.js    content agent (names, looks, scenes)
 js/audio/sfx.js       content agent
 js/render/scene.js    render agent (BoardView)
-js/render/models.js   render agent (procedural low-poly cartoon models)
+js/render/models.js   render agent (procedural low-poly cartoon models; models/extra.js = golf + zoo objects)
 tests/*.mjs           model/generator agents (run with `node tests/x.mjs`)
 ```
 All model code (`js/model/*`, `js/data/*`, `js/puzzles/*`) must be pure ES modules: no DOM, no three.js — runnable in Node.
@@ -160,6 +187,11 @@ export function murdererOf(puzzle, positions)                   // id
 export function withSolution(puzzle)                            // returns copy with solution + murderer filled
 ```
 Must solve a 9×9 in < 200 ms (backtracking with unary-domain filtering + row/col/forward checks).
+16×16 extreme puzzles (1–2 clues each) verify uniqueness in roughly 5–150 ms (measured; generator nodeLimit 8000–20000).
+Search: MRV + forward checking, then exact-cover branching on the most constrained of {character, free row, free column};
+arc pruning (row/column bounds and masks, room masks) for relative clues between unplaced characters (`dir`, `rowOffset`,
+`sameRoom`, `roomNumberCompare`); parity pruning (rooms with the wrong head-count parity need distinct reachable people
+via bipartite matching, forced single reachers, leftover-parity check) for the `roomParity` note.
 
 ### js/model/hints.js
 ```js
@@ -173,7 +205,8 @@ export function getHint(puzzle, placements)
 
 ### js/model/generator.js (phase 2)
 ```js
-export function generatePuzzle({ size = 6, difficulty = 'easy', seed = Date.now() } = {}) // -> puzzle (unique)
+export function generatePuzzle({ size = 6, difficulty = 'easy', seed = Date.now(), scene = null, budgetMs = 1400 } = {}) // -> puzzle (unique)
+// difficulty 'extreme' forces size 16 and picks golf or zoo (scenes with extreme:true); budgetMs is the weakening time budget.
 ```
 Furnishing (`buildLayout`): rooms of the scene are matched to partition regions (big:1 recipes get large regions),
 then each room is furnished from its own recipe: budget = size*U(fill) cells (rooms <= 4 cells: <= 2 objects; at most

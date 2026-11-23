@@ -8,7 +8,7 @@ import { isOccupiable, roomAt, roomKeys, roomCells } from '../js/model/grid.js';
 import { OBJECT_TYPES, FLOOR_TYPES } from '../js/model/objects.js';
 import { CASES } from '../js/puzzles/cases.js';
 import { SAMPLE_PUZZLE } from '../js/puzzles/sample.js';
-import { buildLayout, WALL_TYPES, SEAT_ANCHORS } from '../js/model/generator.js';
+import { buildLayout, WALL_TYPES, SEAT_ANCHORS, CLUSTER_OK } from '../js/model/generator.js';
 import { SCENES } from '../js/data/content.js';
 import { makeRng } from '../js/model/rng.js';
 import { assignFacing, FRONTED_TYPES, FACING_DIRS } from '../js/model/facing.js';
@@ -239,7 +239,7 @@ function checkFurnishing(P, scene, { small = 2 } = {}) {
   const perRoom = {};
   for (const o of P.objects) {
     const k = P.rooms[o.r][o.c];
-    const rec = byName[P.roomInfo[k].name];
+    const rec = byName[P.roomInfo[k].recipe ?? P.roomInfo[k].name];
     assert.ok(rec, 'room has recipe');
     assert.ok(recTypes(rec).has(o.type), `${o.type} not allowed in ${rec.name} (${scene.key})`);
     if (WALL_TYPES.has(o.type) || (rec.items.find((i) => i.t === o.type)?.wall)) {
@@ -261,7 +261,7 @@ function checkFurnishing(P, scene, { small = 2 } = {}) {
   }
   for (const [k, pr] of Object.entries(perRoom)) {
     const name = P.roomInfo[k].name;
-    const bedRec = byName[name].items.find((i) => i.t === 'bed');
+    const bedRec = byName[P.roomInfo[k].recipe ?? name].items.find((i) => i.t === 'bed');
     assert.ok((pr.bed || 0) <= (bedRec?.size ? bedRec.size[1] : 1), `bed count in ${name}`);
     if (name === 'Sauna') assert.ok(!pr.bed && !pr.crate, 'no bed/crate in Sauna');
     if (name === 'Boot Room') assert.ok(!pr.bed && (pr.crate || 0) <= 1, 'Boot Room');
@@ -365,7 +365,7 @@ test('clue text reads naturally for new object types', () => {
 });
 
 test('layout: no same-type cluster > 2 (except natural clumps), sane per-room counts', () => {
-  const OK = new Set(['water', 'flowers', 'haybale', 'tree', 'bush', 'rug', 'boat']);
+  const OK = CLUSTER_OK;
   let n = 0;
   for (const scene of SCENES) for (let N = 5; N <= 9; N++) for (let seed = 1; seed <= 12; seed++) {
     const lay = buildLayout(makeRng(seed * 977 + N), N, scene);
@@ -429,6 +429,57 @@ test('facing: fronted objects never face a wall/edge when an alternative exists;
   for (const c of CASES) check(c, c.id);
   check(SAMPLE_PUZZLE, 'sample');
   for (const seed of [1, 2, 3]) check(generatePuzzle({ size: 6, difficulty: 'easy', seed }), `gen${seed}`);
+});
+
+// ---- Extreme mode (16x16, golf + zoo)
+test('new clue types: roomNumberCompare, rowOffset, roomParity note', () => {
+  const pz = {
+    size: 4, rooms: ['AABB', 'AABB', 'CCDD', 'CCDD'], objects: [],
+    roomInfo: { A: { name: 'Hole 1', floor: 'grass', number: 1 }, B: { name: 'Hole 2', floor: 'grass', number: 2 },
+      C: { name: 'Hole 3', floor: 'grass', number: 3 }, D: { name: 'Clubhouse', floor: 'wood' } },
+    roomNoun: 'hole',
+    characters: [{ id: 'A', name: 'Ann', gender: 'f', clues: [] }, { id: 'B', name: 'Bo', gender: 'm', clues: [] }],
+  };
+  const pos = { A: { r: 0, c: 0 }, B: { r: 2, c: 1 } }; // A in Hole 1, B in Hole 3
+  assert.equal(evaluateClue({ type: 'roomNumberCompare', of: 'B', cmp: 'lower' }, 'A', pos, pz), true);
+  assert.equal(evaluateClue({ type: 'roomNumberCompare', of: 'B', cmp: 'higher' }, 'A', pos, pz), false);
+  assert.equal(evaluateClue({ type: 'roomNumberCompare', of: 'B', cmp: 'higher' }, 'A', { A: pos.A }, pz), null);
+  assert.equal(evaluateClue({ type: 'rowOffset', of: 'B', delta: -2 }, 'A', pos, pz), true);
+  assert.equal(evaluateClue({ type: 'rowOffset', of: 'B', delta: -1 }, 'A', pos, pz), false);
+  assert.match(clueText({ type: 'rowOffset', of: 'B', delta: -1 }, pz.characters[0], pz), /exactly one row north of/);
+  assert.match(clueText({ type: 'roomNumberCompare', of: 'B', cmp: 'higher' }, pz.characters[0], pz), /higher-numbered hole/);
+  assert.match(noteText({ type: 'roomParity' }, pz), /even-numbered/);
+  // Parity: Hole 1 (odd) needs an odd count, Hole 2 (even) an even count, Hole 3 (odd) odd.
+  const note = { type: 'roomParity' };
+  assert.equal(evaluateNote(note, pos, pz), true);
+  assert.equal(evaluateNote(note, { A: pos.A, B: { r: 0, c: 1 } }, pz), false); // Hole 1 holds 2 people
+});
+
+test('extreme 16x16: golf + zoo generate fast, unique, parity-correct', () => {
+  for (const [scene, seed] of [['golf', 'x1'], ['golf', 'x2'], ['zoo', 'x1'], ['zoo', 'x2']]) {
+    const t0 = performance.now();
+    const p = generatePuzzle({ difficulty: 'extreme', seed, scene });
+    const gen = performance.now() - t0;
+    assert.equal(p.size, 16);
+    assert.equal(p.characters.length, 16);
+    assert.equal(p.characters.filter((c) => c.victim).length, 1);
+    assert.ok(roomKeys(p).length >= 9, 'rooms');
+    const t1 = performance.now();
+    const r = solve(p, { limit: 2 });
+    const sol = performance.now() - t1;
+    assert.equal(r.count, 1, `${scene} unique`);
+    for (const ch of p.characters) assert.deepEqual(r.solutions[0][ch.id], p.solution[ch.id]);
+    assert.equal(murdererOf(p, p.solution), p.murderer);
+    for (const n of p.notes) assert.equal(evaluateNote(n, p.solution, p), true, `${scene} note ${n.type}`);
+    if (scene === 'golf') {
+      assert.ok(p.notes.some((n) => n.type === 'roomParity'));
+      assert.ok(Object.values(p.roomInfo).some((i) => i.number != null));
+    }
+    for (const ch of p.characters) assert.ok(ch.clues.length <= 2);
+    assert.ok(gen < 4000, `${scene} ${seed}: generation ${Math.round(gen)} ms`);
+    assert.ok(sol < 1500, `${scene} ${seed}: solve ${Math.round(sol)} ms`);
+    console.log(`       extreme ${scene} ${seed}: gen ${Math.round(gen)} ms, solve ${Math.round(sol)} ms`);
+  }
 });
 
 console.log(`

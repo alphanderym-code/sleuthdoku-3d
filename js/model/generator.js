@@ -5,14 +5,15 @@
 import { makeRng } from './rng.js';
 import { isBlockingType } from './objects.js';
 import { roomAt, objectAt, isBeside, isCorner } from './grid.js';
-import { evaluateClue, evaluateNote } from './clues.js';
+import { evaluateClue, evaluateNote, roomNumber } from './clues.js';
 import { solve, prepare, murdererOf } from './solver.js';
 import { propagate } from './hints.js';
 import { assignFacing } from './facing.js';
 import { SCENES, pickCast, randomLook } from '../data/content.js';
 
-export const DIFFICULTIES = ['very-easy', 'easy', 'medium', 'hard'];
-export const DEFAULT_SIZE = { 'very-easy': 5, easy: 6, medium: 7, hard: 8 };
+export const DIFFICULTIES = ['very-easy', 'easy', 'medium', 'hard', 'extreme'];
+export const DEFAULT_SIZE = { 'very-easy': 5, easy: 6, medium: 7, hard: 8, extreme: 16 };
+export const EXTREME_SIZE = 16;
 
 const now = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
 
@@ -35,10 +36,16 @@ const WEIGHTS = {
     besideObject: 2.5, corner: 2, alone: 2, rowOneOf: 2, columnOneOf: 2, besidePerson: 3, sameRoom: 2.5,
     dir: 3, dirDist: 3, dirDiag: 3, dirOther: 3, aloneWithGender: 2.5, withSomeoneBeside: 2.5,
     notOnObject: 2, notInRoom: 2, notBesideObject: 2, diagonal: 2.5 },
+  extreme: { onObjectInRoom: 2, aloneInRoom: 1.5, onObject: 1.5, inRoom: 1.5, row: 0.7, column: 0.7, aloneWith: 2.5,
+    besideObject: 2.5, corner: 1.5, alone: 1.5, rowOneOf: 2, columnOneOf: 2, besidePerson: 3, sameRoom: 2.5,
+    dir: 3, dirDist: 3, dirDiag: 3, dirOther: 3, aloneWithGender: 2.5, withSomeoneBeside: 2.5,
+    notOnObject: 1.5, notInRoom: 1.5, notBesideObject: 1.5, diagonal: 2.5, rowOffset: 3, roomNumberCompare: 3.5 },
 };
 // Clue kinds used when repairing a puzzle the logic engine gets stuck on.
 const STRONG = new Set(['inRoom', 'row', 'column', 'onObject', 'onObjectInRoom', 'aloneInRoom', 'aloneWith',
   'corner', 'besideObject', 'rowOneOf', 'columnOneOf', 'dirDist', 'besidePerson']);
+// Starting clues at 16x16 (strong: they pin a room or a line, so the solver stays fast).
+const START = new Set(['inRoom', 'onObjectInRoom', 'aloneInRoom']);
 // Clue budget (SPEC v2 item 4) and case-note budget per difficulty.
 //   maxPer: clues per suspect; maxDoubles: suspects allowed a 2nd clue; maxNotes: case notes;
 //   notePrior: chance to start with a note; addW / noteW: relative weight of those edits.
@@ -47,6 +54,7 @@ const BUDGET = {
   easy: { maxPer: 1, maxDoubles: 0, maxNotes: 1, notePrior: 0.2, addW: 0, noteW: 0.8 },
   medium: { maxPer: 2, maxDoubles: 3, maxNotes: 2, notePrior: 0.4, addW: 0.3, noteW: 1.2 },
   hard: { maxPer: 2, maxDoubles: 8, maxNotes: 2, notePrior: 0.7, addW: 0.7, noteW: 1.5 },
+  extreme: { maxPer: 2, maxDoubles: 15, maxNotes: 3, notePrior: 0.8, addW: 0.5, noteW: 1.5 },
 };
 // Max "what-if" (lookahead) steps and logic-engine "narrow" steps allowed per difficulty.
 const LIMITS = {
@@ -54,6 +62,7 @@ const LIMITS = {
   easy: { trial: 1, narrow: 0 },
   medium: { trial: 3, narrow: 0 },
   hard: { trial: 99, narrow: 1 },
+  extreme: { trial: 999, narrow: 999 }, // 16x16: uniqueness only (the logic profile is too slow to replay)
 };
 
 const ROOM_KEY_FALLBACK = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -168,7 +177,8 @@ export const SEAT_ANCHORS = { chair: ['table', 'desk', 'counter'], stool: ['coun
 const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const N8 = [...N4, [1, 1], [1, -1], [-1, 1], [-1, -1]];
 // Types that naturally come in big clumps (no cluster / per-room count limit).
-export const CLUSTER_OK = new Set(['water', 'flowers', 'haybale', 'tree', 'bush', 'rug', 'boat']);
+export const CLUSTER_OK = new Set(['water', 'flowers', 'haybale', 'tree', 'bush', 'rug', 'boat',
+  'bear', 'lion', 'elephant', 'penguin', 'croc', 'shark', 'shallows', 'bunker']);
 export const MAX_CLUSTER = 2;
 
 function makeState(N, rooms, roomSize) {
@@ -370,7 +380,8 @@ const OBJ_OCC = (t) => !isBlockingType(t);
 
 export function buildLayout(rng, N, scene) {
   const maxK = scene.rooms.length;
-  const K = Math.min(maxK, rng.int(Math.max(3, N - 1), N + 1));
+  const [kLo, kHi] = (N >= 12 && scene.roomCount) || [Math.max(3, N - 1), N + 1];
+  const K = Math.min(maxK, rng.int(kLo, kHi));
   const g = partition(rng, N, K);
   if (!g) return null;
   const sizes = new Array(K).fill(0);
@@ -390,7 +401,7 @@ export function buildLayout(rng, N, scene) {
     rooms.push(s);
   }
   const roomInfo = {}, recipes = {}, roomSize = {};
-  roomDefs.forEach((d, k) => { roomInfo[keys[k]] = { name: d.name, floor: d.floor }; recipes[keys[k]] = d; roomSize[keys[k]] = sizes[k]; });
+  roomDefs.forEach((d, k) => { roomInfo[keys[k]] = { name: d.name, floor: d.floor, ...(d.numbered ? { numbered: true } : {}) }; recipes[keys[k]] = d; roomSize[keys[k]] = sizes[k]; });
 
   const st = makeState(N, rooms, roomSize);
   let empties = 0;
@@ -481,10 +492,16 @@ function cluePool(puzzle, sol, id, victimId) {
     }
   }
   // Relations to other suspects.
+  const myNum = roomNumber(puzzle, room);
   for (const ch of puzzle.characters) {
     if (ch.id === id || ch.id === victimId) continue;
     const q = sol[ch.id];
     const dr = p.r - q.r, dc = p.c - q.c;
+    const otherNum = roomNumber(puzzle, roomAt(puzzle, q.r, q.c));
+    if (myNum != null && otherNum != null && myNum !== otherNum) {
+      add({ type: 'roomNumberCompare', of: ch.id, cmp: myNum > otherNum ? 'higher' : 'lower' }, 1.2);
+    }
+    if (N >= 12 && dr && Math.abs(dr) <= 3) add({ type: 'rowOffset', of: ch.id, delta: dr }, 1);
     const other = roomAt(puzzle, q.r, q.c) !== room;
     if (isBeside(puzzle, p, q)) add({ type: 'besidePerson', who: ch.id });
     if (!other) add({ type: 'sameRoom', who: ch.id });
@@ -605,13 +622,17 @@ function badness(prof, difficulty) {
 
 // ---------------------------------------------------------------- one attempt
 
-function attempt(rng, N, difficulty, sceneOpt, seed) {
+function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
+  const eligible = SCENES.filter((s) => (difficulty === 'extreme' ? s.extreme : !(s.minSize > N)));
   const scene = sceneOpt
-    ? SCENES.find((s) => s.key === sceneOpt) ?? rng.pick(SCENES)
-    : rng.pick(SCENES);
+    ? SCENES.find((s) => s.key === sceneOpt) ?? rng.pick(eligible)
+    : rng.pick(eligible);
   const layout = buildLayout(rng, N, scene);
   if (!layout) return null;
   const { rooms, roomInfo, blocked, objects } = layout;
+  // Numbered rooms (golf holes): the numbers are dealt after the people are placed, so that every
+  // hole's head count has the parity of its number (needs #odd-count holes == #odd numbers).
+  const numberedKeys = scene.numbered ? Object.keys(roomInfo).filter((k) => roomInfo[k].numbered) : [];
 
   // Solution placement with a valid victim room.
   let cellsSol = null, victimIdx = -1;
@@ -625,6 +646,17 @@ function attempt(rng, N, difficulty, sceneOpt, seed) {
     const pairs = Object.values(byRoom).filter((l) => l.length === 2);
     if (!pairs.length) continue;
     const pair = rng.shuffle(rng.pick(pairs));
+    if (numberedKeys.length) {
+      const M = numberedKeys.length;
+      const odd = numberedKeys.filter((k) => (byRoom[k]?.length || 0) % 2 === 1);
+      if (odd.length !== Math.ceil(M / 2)) continue;
+      const nums = [...Array(M).keys()].map((x) => x + 1);
+      const oddNums = rng.shuffle(nums.filter((x) => x % 2 === 1)), evenNums = rng.shuffle(nums.filter((x) => x % 2 === 0));
+      for (const k of numberedKeys) {
+        const n = (byRoom[k]?.length || 0) % 2 === 1 ? oddNums.pop() : evenNums.pop();
+        roomInfo[k] = { name: `${(scene.noun || 'area').replace(/^./, (ch) => ch.toUpperCase())} ${n}`, floor: roomInfo[k].floor, number: n, recipe: layout.ctx.recipes[k].name };
+      }
+    }
     cellsSol = pl; victimIdx = pair[0];
   }
   if (!cellsSol) return null;
@@ -663,13 +695,15 @@ function attempt(rng, N, difficulty, sceneOpt, seed) {
 
   const base = {
     id: `gen-${seed}-${N}`, title: scene.title, difficulty, size: N, outdoor: !!scene.outdoor,
-    rooms, roomInfo, objects, characters, notes: [],
+    rooms, roomInfo, objects, characters, notes: numberedKeys.length && scene.parity ? [{ type: 'roomParity' }] : [],
+    ...(numberedKeys.length ? { roomNoun: scene.noun || 'area' } : {}),
   };
 
   const W = WEIGHTS[difficulty];
   const B = BUDGET[difficulty];
-  const SAMPLE = N >= 8 ? 3 : 5;
-  const NODES = N >= 8 ? 1500 : 4000;
+  const XL = N >= 12;
+  const SAMPLE = XL ? 4 : N >= 8 ? 3 : 5;
+  const NODES = XL ? 20000 : N >= 8 ? 1500 : 4000;
   const pools = {};
   for (const id of suspectIds) {
     pools[id] = cluePool(base, sol, id, victimId).filter((c) => evaluateClue(c.clue, id, sol, base) === true);
@@ -680,12 +714,21 @@ function attempt(rng, N, difficulty, sceneOpt, seed) {
 
   // State: clue lists per suspect + notes.
   let state = { clues: {}, notes: [] };
-  for (const id of suspectIds) state.clues[id] = [pickW(rng, pools[id], clueW).clue];
+  // 16x16: the weak-clue state has far too many solutions for the solver, so start from two strong
+  // clues per suspect (a room + a line: nearly one cell) and weaken them afterwards while uniqueness holds.
+  for (const id of suspectIds) {
+    if (XL) {
+      const roomy = pools[id].filter((c) => START.has(c.clue.type));
+      const line = pools[id].filter((c) => c.clue.type === 'row' || c.clue.type === 'column');
+      state.clues[id] = [pickW(rng, roomy.length ? roomy : pools[id], clueW).clue];
+      if (line.length) state.clues[id].push(pickW(rng, line, clueW).clue);
+    } else state.clues[id] = [pickW(rng, pools[id], clueW).clue];
+  }
   if (notesAll.length && rng.chance(B.notePrior)) state.notes.push(pickW(rng, notesAll, (n) => n.w).note);
 
   const build = (st) => ({
     ...base,
-    notes: st.notes.map((n) => ({ ...n })),
+    notes: [...base.notes.map((n) => ({ ...n })), ...st.notes.map((n) => ({ ...n }))],
     characters: base.characters.map((ch) => ({
       ...ch, clues: ch.victim ? [{ type: 'victim' }] : st.clues[ch.id].map((cl) => ({ ...cl })),
     })),
@@ -760,6 +803,38 @@ function attempt(rng, N, difficulty, sceneOpt, seed) {
   }
   if (!unique) return null;
 
+  if (XL) {
+    // Phase 2 (extreme): weaken clues one at a time (drop a second clue or swap in a weaker one),
+    // keeping the solution unique, until the time budget is used.
+    const tEnd = now() + Math.max(900, (budgetMs ?? 1400) * 0.9);
+    const dropClue = (st, id) => {
+      const next = { clues: { ...st.clues }, notes: st.notes };
+      const l = st.clues[id].slice(); l.splice(rng.int(0, l.length - 1), 1); next.clues[id] = l;
+      return next;
+    };
+    const weakenStep = (st, forceDrop) => {
+      const id = rng.pick(suspectIds);
+      const cl = st.clues[id];
+      if (cl.length > 1 && (forceDrop || rng.chance(0.3))) return dropClue(st, id);
+      if (forceDrop) return null;
+      const have = new Set(cl.map(keyOf));
+      const opts = pools[id].filter((x) => !have.has(keyOf(x.clue)));
+      if (!opts.length) return null;
+      const c = pickW(rng, opts, (x) => clueW(x) * (STRONG.has(wkey(x.clue)) ? 0.2 : 1));
+      return apply(st, { kind: 'replace', owner: id, idx: rng.int(0, cl.length - 1), clue: c.clue });
+    };
+    const tryStep = (forceDrop) => {
+      const st = weakenStep(state, forceDrop);
+      if (!st) return false;
+      const r = solve(build(st), { limit: 2, nodeLimit: 8000 });
+      if (r.aborted || r.count !== 1) return false;
+      state = st; return true;
+    };
+    for (let it = 0; it < 600 && now() < tEnd; it++) tryStep(false);
+    const pzx = build(state);
+    return { puzzle: { ...pzx, solution: sol, murderer: murdererOf(pzx, sol) }, prof: { ok: true, direct: 0, trial: 0, narrow: 0, stuck: [] }, scene: scene.key };
+  }
+
   // Phase 2: difficulty repair — edits that keep uniqueness and lower the logic-profile badness.
   let pz = build(state);
   let prof = logicProfile(pz, sol);
@@ -790,13 +865,13 @@ function attempt(rng, N, difficulty, sceneOpt, seed) {
 export function generatePuzzle({ size, difficulty = 'easy', seed = Date.now(), scene = null, budgetMs = 1400 } = {}) {
   if (!DIFFICULTIES.includes(difficulty)) throw new Error(`Unknown difficulty: ${difficulty}`);
   let N = size ?? DEFAULT_SIZE[difficulty];
-  N = Math.max(5, Math.min(9, Math.round(N)));
+  N = difficulty === 'extreme' ? EXTREME_SIZE : Math.max(5, Math.min(9, Math.round(N)));
   const t0 = now();
   let best = null, bestBad = Infinity;
   const MAX_ATTEMPTS = 80;
   for (let a = 0; a < MAX_ATTEMPTS; a++) {
     const rng = makeRng(`${seed}|${N}|${difficulty}|${scene ?? ''}|${a}`);
-    const res = attempt(rng, N, difficulty, scene, seed);
+    const res = attempt(rng, N, difficulty, scene, seed, budgetMs);
     if (res) {
       if (acceptable(res.prof, difficulty)) {
         if (difficulty !== 'hard' || res.prof.trial + res.prof.narrow > 0 || a >= 6) return res.puzzle;

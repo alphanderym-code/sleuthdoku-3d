@@ -42,7 +42,7 @@ export function prepare(puzzle) {
   }
   const notes = Array.isArray(puzzle.notes) ? puzzle.notes : [];
   for (const n of notes) {
-    if (!['countOnObject', 'noEmptyRoom', 'emptyRooms', 'roomGenders'].includes(n.type)) throw new Error(`Unknown note type: ${n.type}`);
+    if (!['countOnObject', 'noEmptyRoom', 'emptyRooms', 'roomGenders', 'roomParity'].includes(n.type)) throw new Error(`Unknown note type: ${n.type}`);
   }
   // Integer room index + object type per cell (hot-path global checks).
   const roomList = [...new Set(roomOf)];
@@ -60,7 +60,19 @@ export function prepare(puzzle) {
     (pair[o][ch.id] ||= []).push({ owner: ch.id, clue: cl });
   }
   const noteRoomInt = notes.map((n) => (n.type === 'roomGenders' ? roomList.indexOf(n.room) : -1));
-  P = { N, cells, roomOf, ids, victim, domains, ownBinary, ownOther, reverse, roomClues, alone, notes,
+  // Numbered rooms for the parity note: [{ ri (room index), par (0 even / 1 odd) }].
+  const parityRooms = [];
+  roomList.forEach((k, ri) => { const num = puzzle.roomInfo?.[k]?.number; if (num != null) parityRooms.push({ ri, par: num & 1 }); });
+  // Binary clues between two characters that support cheap bound / mask propagation (arc pruning).
+  const ARC_TYPES = new Set(['dir', 'rowOffset', 'sameRoom', 'roomNumberCompare']);
+  const arcs = [];
+  for (const ch of chars) for (const cl of ownBinary[ch.id]) {
+    if (!ARC_TYPES.has(cl.type) || roomList.length > 30) continue;
+    // 'dir' + otherRoom: prune with the weaker plain direction (still sound).
+    arcs.push({ a: ch.id, b: clueOther(cl), clue: cl.otherRoom ? { ...cl, otherRoom: false } : cl });
+  }
+  const roomNum = roomList.map((k) => puzzle.roomInfo?.[k]?.number ?? null);
+  P = { N, parityRooms, arcs, roomNum, cells, roomOf, ids, victim, domains, ownBinary, ownOther, reverse, roomClues, alone, notes,
     roomList, roomInt, objType, gender, pair, noteRoomInt };
   prepCache.set(puzzle, P);
   return P;
@@ -117,6 +129,17 @@ function globalOk(P, ctx, id, i) {
         const target = note.type === 'noEmptyRoom' ? R : R - note.count;
         const occ = ctx.occN + (ctx.cnt[ri] ? 0 : 1);
         if (occ > target || occ + left < target) return false;
+        break;
+      }
+      case 'roomParity': {
+        // Rooms whose count has the wrong parity each still need >= 1 more person.
+        let need = 0;
+        const pr = P.parityRooms;
+        for (let q = 0; q < pr.length; q++) {
+          const c = ctx.cnt[pr[q].ri] + (pr[q].ri === ri ? 1 : 0);
+          if ((c & 1) !== pr[q].par) need++;
+        }
+        if (need > left) return false;
         break;
       }
       case 'roomGenders': {
@@ -211,6 +234,127 @@ export function solve(puzzle, { limit = 2, fixed = {}, nodeLimit = Infinity } = 
     return out;
   }
 
+  // Parity of numbered rooms: a room with the wrong head-count parity needs one more person, so some
+  // unplaced character must still reach it (a single such character is forced into it).
+  const PR = P.parityRooms;
+  const parityTarget = new Int8Array(P.roomList.length).fill(-1);
+  for (const { ri, par } of PR) parityTarget[ri] = par;
+  function parityPrune(cur) {
+    const R = P.roomList.length;
+    const cnt = new Int8Array(R);
+    for (const id of ids) if (pos[id]) cnt[roomIdxInt(pos[id])]++;
+    const idList = Object.keys(cur);
+    const may = new Int8Array(R), lastBy = new Int16Array(R).fill(-1);
+    const reach = new Array(R).fill(0); // bitmask of idList indices that can reach each room
+    let freeReach = false;              // someone can still reach a room with no parity rule
+    for (let a = 0; a < idList.length; a++) {
+      let seen = 0;
+      for (const i of cur[idList[a]]) {
+        const rj = P.roomInt[i];
+        if (!((seen >> rj) & 1)) {
+          seen |= 1 << rj; may[rj]++; lastBy[rj] = a; reach[rj] |= 1 << a;
+          if (parityTarget[rj] < 0) freeReach = true;
+        }
+      }
+    }
+    // Rooms with the wrong parity each need their own extra person (bipartite matching).
+    const need = [];
+    for (const { ri, par } of PR) if ((cnt[ri] & 1) !== par) need.push(ri);
+    if (need.length > idList.length) return false;
+    const owner = new Int16Array(idList.length).fill(-1);
+    const tryRoom = (k, seenMask) => {
+      const m = reach[need[k]];
+      for (let a = 0; a < idList.length; a++) {
+        if (!((m >> a) & 1) || ((seenMask.v >> a) & 1)) continue;
+        seenMask.v |= 1 << a;
+        if (owner[a] < 0 || tryRoom(owner[a], seenMask)) { owner[a] = k; return true; }
+      }
+      return false;
+    };
+    for (let k = 0; k < need.length; k++) if (!tryRoom(k, { v: 0 })) return false;
+    // Everyone else joins rooms in pairs unless an unruled room can still absorb them.
+    if (!freeReach && ((idList.length - need.length) & 1)) return false;
+    for (const ri of need) {
+      if (may[ri] === 1) {
+        const id = idList[lastBy[ri]];
+        cur[id] = cur[id].filter((i) => P.roomInt[i] === ri);
+      }
+    }
+    return true;
+  }
+  // Arc pruning for relative clues between two still-unplaced characters: drop candidates that no
+  // candidate of the other character can support (row/column bounds and masks, room masks).
+  function stats(list) {
+    let rmin = 99, rmax = -1, cmin = 99, cmax = -1, rowMask = 0, colMask = 0, roomMask = 0, nmin = 1e9, nmax = -1e9;
+    for (const i of list) {
+      const r = (i / N) | 0, c = i % N, rj = P.roomInt[i];
+      if (r < rmin) rmin = r;
+      if (r > rmax) rmax = r;
+      if (c < cmin) cmin = c;
+      if (c > cmax) cmax = c;
+      rowMask |= 1 << r; colMask |= 1 << c; roomMask |= 1 << rj;
+      const nm = P.roomNum[rj];
+      if (nm != null) { if (nm < nmin) nmin = nm; if (nm > nmax) nmax = nm; }
+    }
+    return { rmin, rmax, cmin, cmax, rowMask, colMask, roomMask, nmin, nmax };
+  }
+  // Does cell i have support in S (the other character's candidate stats)? owner: i belongs to the clue's owner.
+  function supported(cl, i, S, owner) {
+    const r = (i / N) | 0, c = i % N, rj = P.roomInt[i];
+    switch (cl.type) {
+      case 'rowOffset': { const x = owner ? r - cl.delta : r + cl.delta; return x >= 0 && x < N && ((S.rowMask >> x) & 1) === 1; }
+      case 'sameRoom': return ((S.roomMask >> rj) & 1) === 1;
+      case 'roomNumberCompare': {
+        const n = P.roomNum[rj];
+        if (n == null) return false;
+        return owner === (cl.cmp === 'higher') ? n > S.nmin : n < S.nmax;
+      }
+      case 'dir': {
+        const d = cl.dist;
+        if (d != null && (cl.dir === 'north' || cl.dir === 'south')) {
+          const sg = cl.dir === 'north' ? 1 : -1;
+          const rr = owner ? r + sg * d : r - sg * d;
+          return rr >= 0 && rr < N && ((S.rowMask >> rr) & 1) === 1;
+        }
+        if (d != null && (cl.dir === 'west' || cl.dir === 'east')) {
+          const sg = cl.dir === 'west' ? 1 : -1;
+          const cc = owner ? c + sg * d : c - sg * d;
+          return cc >= 0 && cc < N && ((S.colMask >> cc) & 1) === 1;
+        }
+        const vert = cl.dir.startsWith('north') ? -1 : cl.dir.startsWith('south') ? 1 : 0; // owner's row vs other's
+        const horz = cl.dir.endsWith('west') ? -1 : cl.dir.endsWith('east') ? 1 : 0;
+        if (vert) {
+          const ok = (owner ? vert < 0 : vert > 0) ? r < S.rmax : r > S.rmin;
+          if (!ok) return false;
+        }
+        if (horz) {
+          const ok = (owner ? horz < 0 : horz > 0) ? c < S.cmax : c > S.cmin;
+          if (!ok) return false;
+        }
+        return true;
+      }
+    }
+    return true;
+  }
+  function arcPrune(cur) {
+    for (let pass = 0; pass < 3; pass++) {
+      let changed = false;
+      for (const { a, b, clue } of P.arcs) {
+        const la = cur[a], lb = cur[b];
+        if (!la || !lb) continue;
+        const sb = stats(lb);
+        const na = la.filter((i) => supported(clue, i, sb, true));
+        if (na.length !== la.length) { if (!na.length) return false; cur[a] = na; changed = true; }
+        const sa = stats(cur[a]);
+        const nb = lb.filter((i) => supported(clue, i, sa, false));
+        if (nb.length !== lb.length) { if (!nb.length) return false; cur[b] = nb; changed = true; }
+      }
+      if (!changed) break;
+    }
+    return true;
+  }
+  const roomIdxInt = (p) => P.roomInt[p.r * N + p.c];
+
   function search(prev, newId) {
     if (++nodes > nodeLimit) { aborted = true; return; }
     if (placed === ids.length) {
@@ -248,8 +392,35 @@ export function solve(puzzle, { limit = 2, fixed = {}, nodeLimit = Infinity } = 
       if (!bestC || cand.length < bestC.length) { best = id; bestC = cand; }
     }
     if (!victimRoomReachable) return;
+    if (P.arcs.length && !arcPrune(cur)) return;
+    if (PR.length && !parityPrune(cur)) return;
+    // Exact-cover style branching: pick the most constrained of {character, free row, free column}.
+    const rowCnt = new Int16Array(N), colCnt = new Int16Array(N);
+    best = null; bestC = null;
+    for (const id of ids) {
+      if (pos[id]) continue;
+      const l = cur[id];
+      if (!bestC || l.length < bestC.length) { best = id; bestC = l; }
+      for (const i of l) { rowCnt[cells[i].r]++; colCnt[cells[i].c]++; }
+    }
+    let axis = null, axisIdx = -1, axisN = bestC ? bestC.length : 0;
     for (let k = 0; k < N; k++) {
-      if ((!rowUsed[k] && !rowSeen[k]) || (!colUsed[k] && !colSeen[k])) return;
+      if (!rowUsed[k]) { if (rowCnt[k] === 0) return; if (rowCnt[k] < axisN) { axisN = rowCnt[k]; axis = 'r'; axisIdx = k; } }
+      if (!colUsed[k]) { if (colCnt[k] === 0) return; if (colCnt[k] < axisN) { axisN = colCnt[k]; axis = 'c'; axisIdx = k; } }
+    }
+    if (axis) {
+      for (const id of ids) {
+        if (pos[id]) continue;
+        for (const i of cur[id]) {
+          const p = cells[i];
+          if ((axis === 'r' ? p.r : p.c) !== axisIdx) continue;
+          pos[id] = p; rowUsed[p.r] = colUsed[p.c] = true; placed++;
+          search(cur, id);
+          delete pos[id]; rowUsed[p.r] = colUsed[p.c] = false; placed--;
+          if (count >= limit || aborted) return;
+        }
+      }
+      return;
     }
     for (const i of bestC) {
       const p = cells[i];

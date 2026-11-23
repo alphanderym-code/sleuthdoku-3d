@@ -118,6 +118,7 @@ const FLOOR_BASE = {
   wood: '#e9c393', tile: '#dcf0f3', grass: '#b9e297', sand: '#f6e2b0',
   stone: '#d9d4ce', carpet: '#e9b6cc', snow: '#f2f6ff', checker: '#f6f0e4',
   water: '#8fd8e6', brick: '#c9b8d6', dirt: '#d6b48a',
+  fairway: '#a4de7c', green: '#b9ee92', // golf (Extreme scenes)
 };
 
 /** Floor pattern texture covering 2×2 cells (UV unit = 2 cells). Cell borders are baked in as a soft grid. */
@@ -440,6 +441,21 @@ function floorTexture(type) {
         const py = r() * S, px = r() * S, len = 60 + r() * 80;
         x.strokeStyle = hsl(base, -16, 0, 0, 0.3); x.lineWidth = 2.5; x.lineCap = 'round';
         wrap9(S, (dx, dy) => { x.beginPath(); x.moveTo(px + dx, py + dy); x.quadraticCurveTo(px + dx + len / 2, py + dy + 5, px + dx + len, py + dy); x.stroke(); });
+      }
+      break;
+    }
+    case 'fairway':
+    case 'green': { // mown golf turf: alternating light/dark stripes (green: finer + smoother)
+      const stripes = type === 'green' ? 16 : 8, sw = S / stripes;
+      for (let i = 0; i < stripes; i++) {
+        x.fillStyle = i % 2 ? 'rgba(255,255,220,0.22)' : 'rgba(70,150,70,0.14)';
+        x.fillRect(i * sw, 0, sw, S);
+      }
+      for (let i = 0; i < (type === 'green' ? 150 : 700); i++) {
+        const bx = r() * S, by = r() * S, len = 3 + r() * 4;
+        x.strokeStyle = r() < 0.5 ? 'rgba(60,140,60,0.35)' : 'rgba(235,255,200,0.4)';
+        x.lineWidth = 1.2;
+        x.beginPath(); x.moveTo(bx, by); x.lineTo(bx + (r() - 0.5) * 2, by - len); x.stroke();
       }
       break;
     }
@@ -778,6 +794,8 @@ export class BoardView {
 
     // Shared resources (live for the whole BoardView)
     this._floorTex = new Map();
+    this._timeU = { value: 0 }; // shared shader time (water ripples, grass wind); frozen when reduced motion is on
+    this._reduceMotion = (typeof window !== 'undefined' && window.matchMedia) ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
     this._tex = {
       x: xMarkTexture('#e5484d', '#6e1a26', 11),
       xAuto: xMarkTexture('#8a8aa6', null, 23),
@@ -825,6 +843,25 @@ export class BoardView {
       frame: toonMat('#ffffff', { map: this._tex.wood }),
       plinth: toonMat('#4b3450'),
       decor: toonMat('#ffffff'),
+      // Grass tufts: vertex-shader wind sway, bending more towards the tip (position.y), phase from instance position.
+      decorWind: (() => {
+        const m = toonMat('#ffffff');
+        const U = this._timeU;
+        m.onBeforeCompile = (sh) => {
+          sh.uniforms.uWTime = U;
+          sh.vertexShader = 'uniform float uWTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+#ifdef USE_INSTANCING
+  vec3 ip = instanceMatrix[3].xyz;
+#else
+  vec3 ip = vec3(0.0);
+#endif
+  float wv = sin(uWTime * 1.9 + ip.x * 2.3 + ip.z * 1.7) + 0.5 * sin(uWTime * 3.7 + ip.z * 3.1);
+  transformed.x += wv * 0.45 * position.y;
+  transformed.z += wv * 0.2 * position.y;`);
+        };
+        m.customProgramCacheKey = () => 'tuftWind';
+        return m;
+      })(),
       // Plaques are drawn in the transparent pass without depth writes, so floor overlays (notes, X marks, hover)
       // that a leaning plaque would cover still show through; tokens/objects in front still hide it.
       plaqueBack: toonMat('#7a5536', { transparent: true, depthWrite: false }),
@@ -1047,6 +1084,19 @@ export class BoardView {
       g.setIndex(idx);
       const tint = new THREE.Color(tints[v % tints.length]);
       const mat = new THREE.MeshToonMaterial({ color: tint, map: this._floorTexture(floor), gradientMap: gradientMap() });
+      if (floor === 'water') {
+        // Animated ripples/glints in world space on top of the drifting texture.
+        const U = this._timeU;
+        mat.onBeforeCompile = (sh) => {
+          sh.uniforms.uWTime = U;
+          sh.vertexShader = 'varying vec3 vWP;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+          sh.fragmentShader = 'uniform float uWTime;\nvarying vec3 vWP;\n' + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+  float rp = sin(vWP.x * 9.0 + uWTime * 1.6 + sin(vWP.z * 7.0 + uWTime)) * sin(vWP.z * 8.0 - uWTime * 1.3 + sin(vWP.x * 6.0 - uWTime * 0.7));
+  diffuseColor.rgb *= 0.96 + 0.04 * rp;
+  diffuseColor.rgb += smoothstep(0.6, 0.92, rp) * 0.09;`);
+        };
+        mat.customProgramCacheKey = () => 'waterRipple';
+      }
       const mesh = new THREE.Mesh(g, mat);
       mesh.receiveShadow = true;
       board.add(mesh);
@@ -1264,7 +1314,7 @@ export class BoardView {
     const col = new THREE.Color();
     for (const [list, geo] of [[tufts, this._geo.tuft], [heads, this._geo.head], [pebbles, this._geo.pebble]]) {
       if (!list.length) continue;
-      const im = new THREE.InstancedMesh(geo, this._mat.decor, list.length);
+      const im = new THREE.InstancedMesh(geo, geo === this._geo.tuft ? this._mat.decorWind : this._mat.decor, list.length);
       list.forEach((it, i) => { im.setMatrixAt(i, it.m); im.setColorAt(i, col.set(it.c)); });
       im.instanceMatrix.needsUpdate = true;
       if (im.instanceColor) im.instanceColor.needsUpdate = true;
@@ -2051,19 +2101,21 @@ export class BoardView {
     if (this.hoverMesh.visible) this._mat.hover.opacity = 0.78 + 0.2 * Math.sin(time * 4.5);
 
     // Gently drifting water surface (shared texture, tiny offset so baked cell grid stays aligned)
+    const calm = !!(this._reduceMotion && this._reduceMotion.matches);
+    if (!calm) this._timeU.value = time;
     const wt = this._floorTex.get('water');
-    if (wt) wt.offset.set(0.006 * Math.sin(time * 0.7), 0.006 * Math.cos(time * 0.55));
+    if (wt && !calm) wt.offset.set(0.006 * Math.sin(time * 0.7), 0.006 * Math.cos(time * 0.55));
 
     // Idle hooks (breathing figurines, flickering flames…) + token contact shadows
     if (this.board) {
       for (const t of this.tokens.values()) {
         if (!t.root.visible) continue;
-        try { t.fig.userData.idle?.(time); t.root.userData.idle?.(time); } catch (e) { console.error(e); t.fig.userData.idle = null; }
+        if (!calm) try { t.fig.userData.idle?.(time); t.root.userData.idle?.(time); } catch (e) { console.error(e); t.fig.userData.idle = null; }
         const lift = Math.max(0, t.hop.position.y);
         const k = Math.max(0.35, 1 - lift * 0.9) * Math.min(1, Math.max(t.hop.scale.x, 0.01));
         t.blob.scale.set(0.72 * k, 1, 0.72 * k);
       }
-      for (const o of this.objectsAt.values()) {
+      if (!calm) for (const o of this.objectsAt.values()) {
         try { o.group.userData.idle?.(time); } catch (e) { console.error(e); o.group.userData.idle = null; }
       }
     }
