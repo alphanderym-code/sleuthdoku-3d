@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Screenshot harness. Query: scene=<key>|case=<n>, size=<n>, seed=<n>, solve=1 (place the solution), sel=1,
-     zoom=<f> (<1 = closer), polar/az=<deg>, tx/tz=<orbit target>, ui=0. Models: m=objects&o=tree,bush | m=figs | m=weapons. -->
+     zoom=<f> (<1 = closer), polar/az=<deg>, tx/tz=<orbit target>, stats=1 (cost overlay). Models: m=objects&o=tree,bush | m=figs | m=weapons. -->
 <html><head><meta charset="utf-8"><title>shot</title>
 <style>html,body{margin:0;height:100%;background:#8ab;overflow:hidden}#b{position:absolute;inset:0}#err{position:absolute;left:8px;top:8px;color:#c00;font:14px monospace;white-space:pre-wrap;background:#fffd}</style>
 <script type="importmap">{"imports":{"three":"../vendor/three/build/three.module.js","three/addons/":"../vendor/three/examples/jsm/"}}</script>
@@ -33,7 +33,27 @@ if (mode === 'portraits') { // grid of BoardView.portrait() images
     const ch = { id: String.fromCharCode(65 + i), name: 'N' + i, gender: i % 2 ? 'f' : 'm', victim: i === n - 1, look: { skin: SKIN[i % 5], hair: HC[i % 7], outfit: OC[i % 9], hairStyle: HAIR[(i >> 1) % 7], accessory: ACC[(i * 3) % 7] } };
     const im = new Image(); im.src = BoardView.portrait(ch, px); im.style.cssText = `width:${px}px;height:${px}px;background:#eef2d8;border-radius:12px`; wrap.appendChild(im);
   }
-  window.__ready = true;
+  if (q.get('stats') === '1') { // draw calls / triangles per frame (all passes) and milliseconds per frame with a GPU flush
+  setTimeout(() => {
+    const R = v.renderer, gl = R.getContext(), info = R.info, px = new Uint8Array(4);
+    info.autoReset = false;
+    const frame = () => { const t = performance.now(); info.reset(); v.post.render(v.scene, v.camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); return performance.now() - t; };
+    const ms = Array.from({ length: 12 }, frame).sort((a, b) => a - b);
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    err(`calls ${info.render.calls} tris ${info.render.triangles} median ${ms[6].toFixed(1)} ms level ${v.post.level} geos ${info.memory.geometries} tex ${info.memory.textures} ${ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : ''}`);
+  }, 1200);
+}
+if (q.get('stats') === '1') { // draw calls / triangles per frame (all passes) and milliseconds per frame with a GPU flush
+  setTimeout(() => {
+    const R = v.renderer, gl = R.getContext(), info = R.info, px = new Uint8Array(4);
+    info.autoReset = false;
+    const frame = () => { const t = performance.now(); info.reset(); v.post.render(v.scene, v.camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); return performance.now() - t; };
+    const ms = Array.from({ length: 12 }, frame).sort((a, b) => a - b);
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    err(`calls ${info.render.calls} tris ${info.render.triangles} median ${ms[6].toFixed(1)} ms level ${v.post.level} geos ${info.memory.geometries} tex ${info.memory.textures} ${ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : ''}`);
+  }, 2500);
+}
+window.__ready = true;
 } else if (mode) {
   const list = mode === 'floors' ? FLOOR_TYPES : mode === 'objects' ? (q.get('o') ? q.get('o').split(',') : Object.keys(OBJECT_TYPES)) : mode === 'weapons' ? WEAPON3D_IDS : Array.from({ length: num('n', 16) }, (_, i) => i);
   const N = num('size', Math.ceil(Math.sqrt(list.length)));
