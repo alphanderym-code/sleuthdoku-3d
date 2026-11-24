@@ -1,70 +1,95 @@
-// Chibi figurines: big head with face, outfit variants, hair styles, accessories, letter disc.
+// Soft vinyl-toy chibi figurines: big round head, bean body, mitten hands, chunky shoes, rounded coin base with letter.
+// Everything static is merged into a few vertex-coloured meshes (own materials, flashable):
+// static (coin rim + legs + shoes), coin face, torso, 2 arms, head, eyes (blink) + weapon (2 meshes) = ~9 draw calls.
 import * as THREE from 'three';
-import { createWeapon3d } from './weapons3d.js';
-import {
-  add, addMerged, toonOwn, canvasTex, addOutlines, hashStr, rng, shade, mix, paleColor, contrastAccent,
-  RB, CYL, SPH, CONE, TOR, CAPS,
-} from './kit.js';
+import { createWeapon3d, vcMerge, vcMat, U, T } from './weapons3d.js';
+import { toonOwn, softMat, hashStr, shade, mix, paleColor, contrastAccent, RB, TOR, CAPS } from './kit.js';
 
-const HEAD_Y = 0.66, HEAD_R = 0.22;
-const TY0 = 0.17; // torso base height
-const DISC_TOP = 0.0785;
-const T = { noOutline: true, shadow: false }; // tiny details: no outline, no shadow
+const PI = Math.PI;
+// Head: ellipsoid, a little wider than tall.
+const HX = 0.245, HY = 0.208, HZ = 0.225, HEAD_Y = 0.65;
+const TY0 = 0.16; // torso base
+const DISC_H = 0.053; // coin height
+const ZO = -0.07; // body sits slightly behind the coin centre so the letter shows in front of the feet
 
-// Torso silhouette (radius by absolute height), used to stick details onto the surface.
-const TORSO = [[0, TY0], [0.15, TY0], [0.19, 0.23], [0.195, 0.29], [0.175, 0.38], [0.135, 0.45], [0.1, 0.485], [0, 0.5]];
-function torsoR(y) {
-  for (let i = 1; i < TORSO.length; i++) {
-    const [r0, y0] = TORSO[i - 1], [r1, y1] = TORSO[i];
-    if (y <= y1) return r0 + (r1 - r0) * Math.max(0, (y - y0) / (y1 - y0));
+// ---- torso profile (absolute y), used to stick details onto the surface ----------------------------------------
+const TP = new THREE.SplineCurve([[0, 0], [0.09, 0.002], [0.15, 0.03], [0.176, 0.09], [0.172, 0.15], [0.146, 0.21], [0.1, 0.262], [0.05, 0.286], [0, 0.292]]
+  .map(([r, y]) => new THREE.Vector2(r, y + TY0))).getPoints(12);
+function tr(y) {
+  for (let i = 1; i < TP.length; i++) if (y <= TP[i].y) { const a = TP[i - 1], b = TP[i]; return a.x + (b.x - a.x) * Math.max(0, (y - a.y) / (b.y - a.y || 1)); }
+  return 0.02;
+}
+function tframe(x, y, off = 0) {
+  const r = Math.max(tr(y), 0.04), z = Math.sqrt(Math.max(r * r - x * x, 0.0004));
+  const pitch = Math.atan2(-(tr(y + 0.02) - tr(y - 0.02)), 0.04), yaw = Math.asin(THREE.MathUtils.clamp(x / r, -0.95, 0.95));
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-pitch, yaw, 0, 'YXZ'));
+  const n = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+  return new THREE.Matrix4().compose(new THREE.Vector3(x, y, z).addScaledVector(n, off), q, new THREE.Vector3(1, 1, 1));
+}
+const _bands = new Map();
+function bandGeo(y0, y1, off) { // slice of the torso surface, a little bigger
+  const k = `${y0}|${y1}|${off}`;
+  let g = _bands.get(k);
+  if (!g) {
+    const pts = [];
+    for (let i = 0; i <= 8; i++) { const y = y0 + (y1 - y0) * (i / 8); pts.push(new THREE.Vector2(tr(y) + off * (i === 0 || i === 8 ? 0.35 : 1), y)); }
+    g = new THREE.LatheGeometry(pts, 18); _bands.set(k, g);
   }
-  return 0.1;
+  return g;
 }
-const torsoZ = (x, y, off = 0) => Math.sqrt(Math.max(torsoR(y) ** 2 - x * x, 0.002)) + off;
-const torsoTilt = (y) => Math.atan2(torsoR(y - 0.04) - torsoR(y + 0.04), 0.08); // surface leans back going up
+const SKIRT = new THREE.LatheGeometry([[0, 0.135], [0.215, 0.135], [0.252, 0.15], [0.256, 0.17], [0.215, 0.225], [0.182, 0.28], [0, 0.286]].map(([r, y]) => new THREE.Vector2(r, y)), 20);
+const TORSO = new THREE.LatheGeometry(TP, 18);
 
-const headZ = (x, y, R = HEAD_R) => Math.sqrt(Math.max(R * R - x * x - y * y, 0.0004));
-/** Puts obj on the head surface at (x,y) facing outwards. */
-function onHead(obj, x, y, off = 0, R = HEAD_R) {
-  obj.position.set(x, y, headZ(x, y, R) + off);
-  obj.rotation.set(-Math.asin(THREE.MathUtils.clamp(y / R, -0.95, 0.95)), Math.asin(THREE.MathUtils.clamp(x / R, -0.95, 0.95)), 0);
-  return obj;
+// ---- head surface ------------------------------------------------------------------------------------------
+function hsurf(x, y) { return HZ * Math.sqrt(Math.max(1 - (x / HX) ** 2 - (y / HY) ** 2, 0.0004)); }
+function hframe(x, y, off = 0) {
+  const z = hsurf(x, y);
+  const n = new THREE.Vector3(x / (HX * HX), y / (HY * HY), z / (HZ * HZ)).normalize();
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.asin(n.y), Math.atan2(n.x, n.z), 0, 'YXZ'));
+  return new THREE.Matrix4().compose(new THREE.Vector3(x, y, z).addScaledVector(n, off), q, new THREE.Vector3(1, 1, 1));
 }
+const _caps = new Map();
+const capGeo = (theta) => { let g = _caps.get(theta); if (!g) { g = new THREE.SphereGeometry(1, 18, 8, 0, PI * 2, 0, theta); _caps.set(theta, g); } return g; };
+const _brims = new Map();
+function brimGeo(rin, rout, drop, th) {
+  const k = `${rin}|${rout}|${drop}|${th}`;
+  let g = _brims.get(k);
+  if (!g) {
+    const h = th / 2, mid = (rin + rout) / 2;
+    g = new THREE.LatheGeometry([[rin, -h], [mid, -h - drop * 0.5], [rout, -h - drop], [rout + h * 0.9, -drop], [rout, h - drop], [mid, h - drop * 0.5], [rin, h]].map(([r, y]) => new THREE.Vector2(r, y)), 36);
+    _brims.set(k, g);
+  }
+  return g;
+}
+const beardGeo = new THREE.SphereGeometry(1, 16, 8, PI / 2 - 1.25, 2.5, 2.2, 0.95);
+const discGeo = new THREE.LatheGeometry([[0, 0], [0.36, 0], [0.382, 0.011], [0.39, 0.026], [0.376, 0.044], [0.345, 0.051], [0.3, 0.049], [0, 0.049]].map(([r, y]) => new THREE.Vector2(r, y)), 28);
+const faceGeo = new THREE.CircleGeometry(0.318, 40);
 
 function discTexture(letter, outfit) {
-  return canvasTex(256, 256, (x, w, h) => {
-    x.fillStyle = '#fff6e4';
-    x.beginPath(); x.arc(w / 2, h / 2, w / 2 - 1, 0, Math.PI * 2); x.fill();
-    x.lineWidth = 7; x.strokeStyle = shade(outfit, 0.8);
-    x.beginPath(); x.arc(w / 2, h / 2, w / 2 - 8, 0, Math.PI * 2); x.stroke();
-    x.fillStyle = shade(outfit, 1.7);
-    for (let i = 0; i < 24; i++) { // little dots on the rim
-      const a = (i / 24) * Math.PI * 2;
-      x.beginPath(); x.arc(w / 2 + Math.cos(a) * (w / 2 - 22), h / 2 + Math.sin(a) * (h / 2 - 22), 3.5, 0, Math.PI * 2); x.fill();
-    }
-    x.fillStyle = shade(outfit, 0.45);
-    x.font = 'bold 60px "Trebuchet MS", "Segoe UI", Arial, sans-serif';
-    x.textAlign = 'center'; x.textBaseline = 'middle';
-    x.lineWidth = 8; x.strokeStyle = '#fff6e4'; x.lineJoin = 'round';
-    x.strokeText(letter, w / 2, h / 2 + 90); x.fillText(letter, w / 2, h / 2 + 90);
-  });
-}
-
-function capGeo(theta, r) {
-  return new THREE.SphereGeometry(r, 22, 14, 0, Math.PI * 2, 0, theta);
+  const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+  const x = cv.getContext('2d');
+  x.fillStyle = '#fff3dc'; x.fillRect(0, 0, 256, 256);
+  x.strokeStyle = shade(outfit, 1.45); x.lineWidth = 6;
+  x.beginPath(); x.arc(128, 128, 118, 0, PI * 2); x.stroke();
+  x.font = '900 112px "Trebuchet MS", "Segoe UI", Arial, sans-serif';
+  x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineJoin = 'round';
+  x.lineWidth = 16; x.strokeStyle = '#fff3dc';
+  x.strokeText(letter, 128, 196);
+  x.fillStyle = shade(outfit, 0.52); x.fillText(letter, 128, 196);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.userData.owned = true;
+  return t;
 }
 
 /**
- * Builds a chibi figurine from character.look. Height ~0.9-1.0 (cell = 1), head centre at y=0.66.
- * group.userData.materials = toon materials owned by this figurine (for flashes).
- * group.userData.idle(t) = subtle breathing / blink / head tilt.
+ * Builds a chibi figurine from character.look. Height ~1 (cell = 1), head centre at y=0.65, feet/base at y=0, faces +z.
+ * group.userData.materials = own materials (for flashes). group.userData.idle(t) = breathing / blink / head tilt / arm sway.
  */
 export function createFigurine(character, weapon) {
   const ch = character || {};
   const victim = !!ch.victim;
   const seed = hashStr(String(ch.id || ch.name || '?') + (ch.name || ''));
   const male = ch.gender === 'm', female = ch.gender === 'f';
-  // Normalize the look so it always matches gender (hand-authored cases included); source data is untouched.
   const look = { ...(ch.look || {}) };
   if (male) {
     if (look.hairStyle === 'long' || look.hairStyle === 'bun' || look.hairStyle === 'ponytail') look.hairStyle = ['short', 'slick', 'spiky', 'curly'][seed % 4];
@@ -75,358 +100,293 @@ export function createFigurine(character, weapon) {
   const skin = tint(look.skin, '#f1c27d');
   const hair = tint(look.hair, '#3b2a1a');
   const outfit = tint(look.outfit, '#4f86c6');
+  const accent = tint(contrastAccent(outfit), '#e07a5f');
   const letter = String(ch.id || '?').slice(0, 1).toUpperCase();
-  const r = rng(seed);
-  const variant = seed % 4;
-  const accent = contrastAccent(outfit);
+  const ex = seed % 5; // expression
+  const style = look.hairStyle || 'short';
+  const hat = look.accessory === 'hat';
+  let ov = seed % 8; // outfit variant
+  if (!female && ov === 6) ov = 2;
 
   const g = new THREE.Group();
   g.name = `figurine:${letter}`;
   const mats = [];
-  const mat = (color, opts) => { const m = toonOwn(color, opts); mats.push(m); return m; };
-  const mSkin = mat(skin), mHair = mat(hair), mOutfit = mat(outfit), mDark = mat('#2b2b3a');
-  const mWhite = mat('#fffdf6'), mOutDark = mat(shade(outfit, 0.65)), mOutLight = mat(shade(outfit, 1.35));
-  const mPants = mat(mix(shade(outfit, 0.5), '#3a3550', 0.4));
-  const mShoe = mat(r() < 0.5 ? '#5a3a28' : '#f4efe6');
-  const mAcc = mat(accent), mGold = mat('#f2c14e');
+  const own = (m) => { mats.push(m); return m; };
+  const mBody = own(vcMat(0.55));
+  const mEyes = own(vcMat(0.12));
 
-  // ---- Base disc: dark base, beveled ring in outfit colour, cream top plate with letter
-  add(g, CYL(0.38, 0.4, 0.045, 36), mat(shade(outfit, 0.7)), { pos: [0, 0.0225, 0] });
-  add(g, CYL(0.35, 0.375, 0.032, 36), mOutfit, { pos: [0, 0.061, 0], noOutline: true });
-  add(g, TOR(0.352, 0.012, 6, 36), mOutLight, { pos: [0, 0.075, 0], rot: [Math.PI / 2, 0, 0], ...T });
-  const discTop = new THREE.MeshBasicMaterial({ map: discTexture(letter, outfit) });
-  const top = add(g, new THREE.CircleGeometry(0.338, 36), discTop, { pos: [0, DISC_TOP, 0], rot: [-Math.PI / 2, 0, 0], ...T });
-  top.receiveShadow = false;
+  const od = shade(outfit, 0.72), ol = shade(outfit, 1.4), cream = '#fff3dc';
+  const shirt = mix(cream, outfit, 0.18);
+  const hd = hair, hl = mix(hair, '#ffffff', 0.2);
+  const hairC = [hd, hl, -0.04, 0.26];
+  const skinC = [shade(skin, 0.97), shade(skin, 1.05), -0.2, 0.2];
+  const shoeC = ['#6b4a3a', '#f6efe4', '#d65a4c', '#3f4f7a'][(seed >> 3) % 4];
+  const pants = ov === 1 ? outfit : mix(shade(outfit, 0.5), '#3a3550', 0.45);
+  const legC = ov === 6 ? skin : pants;
 
-  // ---- Legs & shoes
+  // ---- Static: coin rim, legs, shoes
+  const st = [];
+  st.push({ g: discGeo, c: [shade(outfit, 0.62), shade(outfit, 1.08), 0, 0.04], p: [0, 0, 0] });
   for (const sx of [-1, 1]) {
-    add(g, CYL(0.055, 0.05, 0.1, 10), mPants, { pos: [sx * 0.085, 0.15, 0.015], ...T });
-    add(g, SPH(0.07, 12, 8), mShoe, { pos: [sx * 0.088, 0.118, 0.09], scale: [1, 0.6, 1.5], rot: [0.05, sx * 0.12, 0], shadow: true, noOutline: true });
+    st.push({ g: CAPS(0.046, 0.05, 2, 8), c: legC, p: [sx * 0.078, 0.125, ZO + 0.01] });
+    st.push({ g: U(8, 6), c: shoeC, p: [sx * 0.082, 0.085, ZO + 0.045], s: [0.072, 0.052, 0.105], r: [0.04, sx * 0.1, 0] });
+    st.push({ g: U(7, 5), c: shade(shoeC, 1.25), p: [sx * 0.084, 0.07, ZO + 0.075], s: [0.065, 0.03, 0.095], r: [0.04, sx * 0.1, 0] });
   }
+  const stMesh = new THREE.Mesh(vcMerge(st), mBody); g.add(stMesh);
 
-  // ---- Torso (pear-shaped lathe) inside a group so it can "breathe"
-  const torsoG = new THREE.Group(); torsoG.position.y = TY0;
-  const torsoW = new THREE.Group(); torsoW.scale.x = male ? 1.1 : 1; torsoW.add(torsoG); g.add(torsoW); // broader chest for men
-  const ly = (y) => y - TY0;
-  const prof = TORSO.map(([rr, yy]) => new THREE.Vector2(rr, ly(yy)));
-  add(torsoG, new THREE.LatheGeometry(prof, 24), mOutfit);
-  const tz = (x, y, off = 0.004) => torsoZ(x, y, off);
-  // belt (all but the apron/hoodie variants get a buckle)
-  const beltY = 0.215;
-  add(torsoG, TOR(torsoR(beltY) + 0.002, 0.016, 6, 28), mOutDark, { pos: [0, ly(beltY), 0], rot: [Math.PI / 2, 0, 0], ...T });
-  if (variant === 0 || variant === 3) add(torsoG, RB(0.05, 0.036, 0.016, 0.006, 1), mGold, { pos: [0, ly(beltY), tz(0, beltY, 0.012)], ...T });
+  // ---- Coin face with the letter (readable from above, in front of the feet)
+  const mFace = own(softMat({ map: discTexture(letter, outfit), roughness: 0.6 }));
+  const face = new THREE.Mesh(faceGeo, mFace);
+  face.rotation.x = -PI / 2; face.position.y = DISC_H + 0.0005; face.receiveShadow = true; g.add(face);
 
-  const front = (geo, m, x, y, off = 0.004, extra = {}) => {
-    const o = add(torsoG, geo, m, { ...T, ...extra });
-    o.position.set(x, ly(y), tz(x, y, off));
-    o.rotation.x = -torsoTilt(y) * 0.9; o.rotation.y = Math.asin(THREE.MathUtils.clamp(x / torsoR(y), -0.9, 0.9));
-    return o;
-  };
-  if (variant === 0) { // jacket: shirt V, lapels, buttons, collar
-    const v = new THREE.Shape(); v.moveTo(-0.07, 0); v.lineTo(0.07, 0); v.lineTo(0, -0.17);
-    front(new THREE.ShapeGeometry(v), mWhite, 0, 0.46, 0.002);
-    for (const sx of [-1, 1]) {
-      const lap = front(RB(0.05, 0.19, 0.014, 0.005, 1), mOutLight, sx * 0.055, 0.385, 0.012);
-      lap.rotation.z = sx * 0.4;
-      front(RB(0.06, 0.035, 0.014, 0.005, 1), mOutLight, sx * 0.075, 0.475, 0.012).rotation.z = -sx * 0.5;
-    }
-    for (let i = 0; i < 3; i++) front(SPH(0.014, 8, 6), mDark, 0.0, 0.325 - i * 0.045, 0.008);
-  } else if (variant === 1) { // apron with pocket and straps
-    const ap = front(RB(0.17, 0.2, 0.012, 0.008, 1), mWhite, 0, 0.29, 0.006, { noOutline: false });
-    front(RB(0.1, 0.1, 0.012, 0.008, 1), mWhite, 0, 0.4, 0.004);
-    front(RB(0.08, 0.05, 0.01, 0.006, 1), mAcc, 0.0, 0.25, 0.014);
-    for (const sx of [-1, 1]) {
-      const s = front(BOXs(0.025, 0.12, 0.012), mWhite, sx * 0.1, 0.47, 0.0);
-      s.rotation.z = sx * -0.35;
-    }
-    ap.userData.noOutline = true;
-  } else if (variant === 2) { // zip hoodie
-    add(torsoG, TOR(0.115, 0.04, 8, 20), mOutLight, { pos: [0, ly(0.465), -0.01], rot: [Math.PI / 2 - 0.25, 0, 0], ...T });
-    front(BOXs(0.012, 0.25, 0.01), mDark, 0, 0.35, 0.006);
-    front(SPH(0.016, 8, 6), mGold, 0.0, 0.43, 0.012);
-    for (const sx of [-1, 1]) front(CAPS(0.007, 0.07, 2, 5), mWhite, sx * 0.035, 0.4, 0.014);
-    front(RB(0.2, 0.075, 0.02, 0.014, 2), mOutDark, 0, 0.255, 0.012);
-  } else { // vest, shirt and tie
-    front(RB(0.17, 0.26, 0.014, 0.01, 1), mWhite, 0, 0.35, 0.004);
-    front(RB(0.034, 0.17, 0.014, 0.008, 1), mAcc, 0, 0.35, 0.014);
-    front(SPH(0.022, 8, 6), mAcc, 0, 0.45, 0.014);
-    for (const sx of [-1, 1]) {
-      const c = front(RB(0.06, 0.03, 0.012, 0.005, 1), mWhite, sx * 0.045, 0.475, 0.012); c.rotation.z = -sx * 0.5;
-    }
+  const body = new THREE.Group(); body.position.z = ZO; g.add(body);
+
+  // ---- Torso (bean) with outfit details
+  const sleeveC = (ov === 1 || ov === 3 || ov === 4) ? shirt : ov === 7 ? od : outfit;
+  const torsoC = (ov === 1 || ov === 3 || ov === 4) ? shirt : ov === 7 ? od : outfit;
+  const tp = [{ g: TORSO, c: [shade(torsoC, 0.95), shade(torsoC, 1.04), TY0, 0.45] }];
+  const on = (geo, c, x, y, off, s, r) => tp.push({ g: geo, c, m: tframe(x, y, off), s, r });
+  const front = (x, y, off, geo, c, s, r) => on(geo, c, x, y, off, s, r);
+  switch (ov) {
+    case 0: // sweater: stripe, hem, roll neck
+      tp.push({ g: bandGeo(0.262, 0.3, 0.007), c: ol });
+      tp.push({ g: bandGeo(0.162, 0.2, 0.006), c: od });
+      tp.push({ g: TOR(0.1, 0.034, 6, 14), c: ol, p: [0, 0.455, -0.005], r: [PI / 2, 0, 0] });
+      break;
+    case 1: // dungarees
+      tp.push({ g: bandGeo(0.16, 0.285, 0.008), c: outfit });
+      front(0, 0.345, 0.006, RB(0.13, 0.13, 0.03, 0.02, 1), outfit);
+      front(0, 0.31, 0.02, RB(0.075, 0.05, 0.02, 0.012, 1), od);
+      for (const sx of [-1, 1]) {
+        front(sx * 0.06, 0.4, 0.008, CAPS(0.016, 0.09, 3, 8), outfit, null, [0, 0, -sx * 0.12]);
+        front(sx * 0.05, 0.37, 0.03, U(8, 6), '#f2c14e', [0.016, 0.016, 0.01]);
+      }
+      break;
+    case 2: // raincoat
+      tp.push({ g: bandGeo(0.162, 0.2, 0.007), c: ol });
+      tp.push({ g: U(), c: ol, p: [0, 0.43, -0.105], s: [0.12, 0.085, 0.07] });
+      for (let i = 0; i < 3; i++) front(0, 0.38 - i * 0.065, 0.012, CAPS(0.014, 0.03, 3, 8), cream, null, [0, 0, PI / 2]);
+      front(0.07, 0.22, 0.012, RB(0.075, 0.05, 0.02, 0.012, 1), od);
+      break;
+    case 3: // cardigan + shirt
+      front(0, 0.33, 0.004, RB(0.07, 0.26, 0.02, 0.01, 1), cream);
+      for (let i = 0; i < 3; i++) front(0.0, 0.4 - i * 0.07, 0.016, U(8, 6), outfit, [0.014, 0.014, 0.01]);
+      for (const sx of [-1, 1]) front(sx * 0.052, 0.45, 0.01, U(), cream, [0.04, 0.024, 0.018], [0, 0, -sx * 0.5]);
+      for (const sx of [-1, 1]) front(sx * 0.1, 0.2, 0.012, RB(0.06, 0.05, 0.016, 0.01, 1), od);
+      tp.push({ g: bandGeo(0.162, 0.188, 0.006), c: od });
+      break;
+    case 4: // apron
+      front(0, 0.25, 0.01, RB(0.17, 0.19, 0.026, 0.02, 1), outfit);
+      front(0, 0.375, 0.012, RB(0.1, 0.1, 0.026, 0.02, 1), outfit);
+      front(0, 0.245, 0.03, RB(0.085, 0.05, 0.02, 0.012, 1), accent);
+      tp.push({ g: TOR(0.088, 0.012, 6, 20), c: outfit, p: [0, 0.44, -0.0], r: [PI / 2 - 0.2, 0, 0] });
+      break;
+    case 5: // polo
+      for (const sx of [-1, 1]) front(sx * 0.055, 0.45, 0.012, U(), ol, [0.05, 0.026, 0.02], [0, 0, -sx * 0.55]);
+      front(0, 0.395, 0.007, RB(0.03, 0.1, 0.016, 0.008, 1), ol);
+      for (let i = 0; i < 2; i++) front(0, 0.425 - i * 0.045, 0.018, U(8, 6), cream, [0.011, 0.011, 0.008]);
+      tp.push({ g: bandGeo(0.162, 0.185, 0.006), c: od });
+      break;
+    case 6: // dress
+      tp.push({ g: SKIRT, c: [od, outfit, 0.135, 0.28] });
+      tp.push({ g: bandGeo(0.262, 0.292, 0.007), c: accent });
+      tp.push({ g: TOR(0.1, 0.022, 6, 24), c: cream, p: [0, 0.455, 0.0], r: [PI / 2 - 0.1, 0, 0] });
+      break;
+    default: // blazer + tie
+      for (const sx of [-1, 1]) front(sx * 0.07, 0.38, 0.012, RB(0.055, 0.17, 0.02, 0.01, 1), shade(od, 1.3), null, [0, 0, sx * 0.3]);
+      front(0, 0.375, 0.006, RB(0.055, 0.2, 0.018, 0.01, 1), cream);
+      front(0, 0.34, 0.02, T(0.016, 0.026, 0.1, 10), accent, null, [PI, 0, 0]);
+      front(0, 0.425, 0.02, U(), accent, [0.024, 0.02, 0.016]);
+      front(-0.085, 0.3, 0.014, RB(0.04, 0.02, 0.014, 0.006, 1), cream);
+      for (let i = 0; i < 2; i++) front(0.06, 0.28 - i * 0.04, 0.018, U(8, 6), '#2e2a45', [0.012, 0.012, 0.008]);
+      tp.push({ g: bandGeo(0.162, 0.2, 0.006), c: shade(od, 1.15) });
   }
+  // neck accessories
+  if (look.accessory === 'bowtie') {
+    for (const sx of [-1, 1]) front(sx * 0.052, 0.4, 0.018, U(), accent, [0.056, 0.04, 0.026], [0, 0, -sx * 0.22]);
+    front(0, 0.4, 0.026, U(), shade(accent, 0.75), [0.024, 0.03, 0.022]);
+  } else if (look.accessory === 'scarf') {
+    const sc = accent, sc2 = shade(accent, 1.5);
+    tp.push({ g: TOR(0.115, 0.048, 6, 16), c: sc, p: [0, 0.43, 0], r: [PI / 2 - 0.12, 0, 0] });
+    front(0.075, 0.33, 0.03, RB(0.085, 0.2, 0.04, 0.018, 1), sc, null, [0, 0, -0.08]);
+    front(0.078, 0.26, 0.036, RB(0.088, 0.03, 0.044, 0.012, 1), sc2, null, [0, 0, -0.08]);
+    front(0.074, 0.35, 0.036, RB(0.088, 0.03, 0.044, 0.012, 1), sc2, null, [0, 0, -0.08]);
+  }
+  const torso = new THREE.Mesh(vcMerge(tp, -TY0), mBody);
+  torso.position.y = TY0; if (male) torso.scale.x = 1.07;
+  body.add(torso);
 
-  // ---- Arms with sleeves, cuffs and hands
+  // ---- Arms: tapered sleeve, cuff, mitten hand, thumb
   const arms = [];
   for (const sx of [-1, 1]) {
-    const ag = new THREE.Group(); ag.position.set(sx * (male ? 0.2 : 0.185), 0.4, 0.01); ag.rotation.z = sx * 0.55; g.add(ag);
-    add(ag, CAPS(0.05, 0.1, 4, 8), mOutfit, { pos: [0, -0.07, 0] });
-    add(ag, TOR(0.05, 0.012, 6, 12), mOutDark, { pos: [0, -0.155, 0], rot: [Math.PI / 2, 0, 0], ...T });
-    add(ag, SPH(0.047, 10, 8), mSkin, { pos: [0, -0.2, 0.01], noOutline: true });
-    arms.push(ag);
+    const ap = [
+      { g: T(0.064, 0.05, 0.115, 14), c: sleeveC, d: [0, -1, 0] },
+      { g: TOR(0.053, 0.014, 5, 10), c: ov === 5 ? cream : shade(sleeveC, 1.35), p: [0, -0.125, 0], r: [PI / 2, 0, 0] },
+      { g: U(8, 6), c: skin, p: [0, -0.192, 0.006], s: [0.05, 0.054, 0.05] },
+      { g: U(7, 5), c: skin, p: [-sx * 0.036, -0.178, 0.026], s: [0.02, 0.026, 0.02] },
+    ];
+    const am = new THREE.Mesh(vcMerge(ap), mBody);
+    const ag = new THREE.Group(); ag.position.set(sx * (male ? 0.19 : 0.182), 0.395, 0.0); ag.rotation.z = sx * 0.5;
+    ag.add(am); body.add(ag); arms.push(ag);
   }
 
-  // ---- Head group
-  const head = new THREE.Group(); head.position.y = HEAD_Y; g.add(head);
-  add(head, SPH(HEAD_R, 28, 20), mSkin);
-  for (const sx of [-1, 1]) add(head, SPH(0.045, 8, 6), mSkin, { pos: [sx * 0.222, -0.005, -0.005], scale: [0.5, 1, 0.8], ...T });
-
-  const mBrow = mat(shade(hair, 0.6)), mNose = mat(mix(skin, '#e08a7a', 0.35)), mCheek = mat(mix(skin, '#ff7b8a', male ? 0.1 : 0.62));
-  const mLash = mat('#1d1a26');
-  const eyes = [];
-  const eyeY = 0.025, eyeX = 0.088;
+  // ---- Head group: head mesh (skin + hair + hat + accessories) and eyes mesh (blink)
+  const head = new THREE.Group(); head.position.y = HEAD_Y; body.add(head);
+  const hp = [{ g: U(18, 12), c: skinC, s: [HX, HY, HZ] }];
+  for (const sx of [-1, 1]) hp.push({ g: U(), c: skin, p: [sx * 0.236, -0.012, -0.005], s: [0.032, 0.05, 0.04] });
+  const fp = (geo, c, x, y, off, s, r, p) => hp.push({ g: geo, c, m: hframe(x, y, off), s, r, p });
+  // blush, nose
+  const blushC = victim ? mix(skin, '#c9a0b8', 0.4) : mix(skin, '#ff6f86', male ? 0.3 : 0.55);
+  for (const sx of [-1, 1]) fp(U(), blushC, sx * 0.155, -0.058, -0.004, [0.042, 0.026, 0.014]);
+  fp(U(), mix(skin, '#d97a64', 0.3), 0, -0.04, 0.004, [0.021, 0.018, 0.018]);
+  // brows
+  const browC = mix(hair, '#2a2030', 0.5);
+  const bk = victim ? -0.38 : [-0.2, -0.16, -0.05, 0.0, 0.1][ex];
   for (const sx of [-1, 1]) {
-    const eg = new THREE.Group(); onHead(eg, sx * eyeX, eyeY, -0.022); head.add(eg);
-    add(eg, SPH(0.056, 14, 10), mWhite, { scale: [1, 1.18, 0.5], ...T });
-    const pupil = add(eg, SPH(0.034, 12, 8), mDark, { pos: [sx * -0.004, -0.004, 0.018], scale: [1, 1.12, 0.5], ...T });
-    add(eg, SPH(0.012, 8, 6), mWhite, { pos: [0.014, 0.02, 0.03], ...T });
-    add(eg, SPH(0.006, 6, 5), mWhite, { pos: [-0.012, -0.014, 0.03], ...T });
-    void pupil;
-    eyes.push(eg);
-    if (female) { // eyelashes: three small strokes fanned at the outer upper corner
-      for (const a of [0.2, 0.62, 1.04]) {
-        const dx = sx * Math.cos(a), dy = Math.sin(a);
-        const l = add(eg, CAPS(0.0045, 0.022, 2, 4), mLash, { ...T });
-        l.position.set(dx * 0.07, dy * 0.08, 0.014);
-        l.rotation.z = -Math.atan2(dx, dy);
-      }
-    }
-    // eyebrow: men thicker and straighter, women thin and slightly arched
-    const br = add(head, male ? CAPS(0.014, 0.056, 2, 6) : CAPS(0.008, 0.05, 2, 6), mBrow, { ...T });
-    onHead(br, sx * 0.09, male ? 0.104 : 0.108, 0.006);
-    br.rotation.z = Math.PI / 2 + sx * (male ? 0.03 + (seed % 3) * 0.03 : 0.12 + (seed % 3) * 0.06) * -1;
-    // cheeks (faint on men)
-    const ck = add(head, SPH(0.035, 8, 6), mCheek, { scale: male ? [0.8, 0.5, 0.3] : [1.12, 0.7, 0.35], ...T });
-    onHead(ck, sx * 0.145, -0.05, -0.004);
+    const lift = (ex === 2 && sx > 0 ? 0.014 : 0) + (ex === 4 ? 0.008 : 0) + (victim ? 0.008 : 0);
+    fp(CAPS(0.0075, male ? 0.036 : 0.03, 3, 6), browC, sx * 0.098, 0.082 + lift, 0.0, null, [0, 0, PI / 2 + sx * bk]);
   }
-  const nose = add(head, SPH(0.028, 10, 8), mNose, { ...T });
-  nose.position.set(0, -0.022, headZ(0, -0.022) + 0.008);
-  const hasBeard = look.accessory === 'beard';
-  if (male && !hasBeard && look.accessory !== 'mustache' && seed % 3 === 1) { // light stubble / jaw shading below the mouth
-    add(head, new THREE.SphereGeometry(HEAD_R + 0.003, 20, 8, Math.PI / 2 - 1.2, 2.4, 2.06, 0.75), mat(mix(skin, hair, 0.28)), { ...T });
-  }
-  const mLip = female ? mat(mix(skin, '#d6455d', 0.7)) : mDark;
-  const mouthR = HEAD_R + (hasBeard ? 0.014 : 0);
-  if (seed % 3 === 0) { // open smile
-    const m = add(head, new THREE.CircleGeometry(0.04, 14, Math.PI, Math.PI), mat('#7a2e3a'), { ...T });
-    onHead(m, 0, -0.082, 0.004, mouthR);
-    const tg = add(head, SPH(0.02, 8, 6), mat('#ff8a9a'), { scale: [1, 0.55, 0.3], ...T });
-    onHead(tg, 0, -0.098, 0.004, mouthR);
+  // mouth
+  const mouthC = victim ? mix(skin, '#b8707c', 0.6) : '#74303c';
+  const arcAt = (A, w, tilt = 0, dx = 0) => fp(TOR(w, 0.0068, 5, 14, A), mouthC, dx, -0.088, 0.004, null, [0, 0, 1.5 * PI - A / 2 + tilt], [0, w * 0.5, 0]);
+  if (victim) fp(CAPS(0.006, 0.026, 3, 6), mouthC, 0, -0.092, 0.004, null, [0, 0, PI / 2]);
+  else if (ex === 1) {
+    fp(new THREE.CircleGeometry(0.036, 18, PI, PI), '#5a2230', 0, -0.075, 0.004);
+    fp(U(), '#ff8fa0', 0, -0.092, 0.006, [0.02, 0.011, 0.004]);
+  } else if (ex === 2) arcAt(0.75 * PI, 0.028, 0.18, 0.012);
+  else if (ex === 3) fp(U(), mouthC, 0, -0.088, 0.004, [0.014, 0.018, 0.008]);
+  else arcAt(PI, 0.031);
+
+  // hair
+  const cap = (theta, tilt, grow = 0.014) => ({ g: capGeo(theta), c: hairC, s: [HX + grow, HY + grow, HZ + grow], r: [tilt, 0, 0] });
+  const blob = (x, y, z, sx, sy, sz, rz = 0, rx = 0, c = hairC) => ({ g: U(8, 6), c, p: [x, y, z], s: [sx, sy, sz], r: [rx, 0, rz] });
+  const spike = (ux, uy, uz, len = 0.07) => {
+    const u = new THREE.Vector3(ux, uy, uz).normalize();
+    return { g: T(0.058, 0.03, len, 8), c: hairC, p: [u.x * HX * 0.9, u.y * HY * 0.9, u.z * HZ * 0.9], d: [u.x, u.y + 0.25, u.z] };
+  };
+  const hairParts = [];
+  const fringe = (k = 1) => {
+    hairParts.push(blob(-0.065, 0.165, 0.118, 0.15 * k, 0.055, 0.09, 0.32), blob(0.085, 0.172, 0.105, 0.1 * k, 0.05, 0.08, -0.22), blob(0, 0.225, 0.03, 0.12, 0.05, 0.1));
+  };
+  if (hat) {
+    hairParts.push(blob(-0.232, -0.035, -0.01, 0.022, 0.085, 0.11), blob(0.232, -0.035, -0.01, 0.022, 0.085, 0.11), blob(0, -0.02, -0.205, 0.2, 0.1, 0.035));
+    if (style === 'long') hairParts.push(blob(0, -0.1, -0.15, 0.24, 0.22, 0.11));
+    if (style === 'ponytail') hairParts.push({ g: T(0.07, 0.03, 0.2, 12), c: hairC, p: [0, 0.0, -0.22], d: [0, -0.9, -0.55] });
   } else {
-    const m = add(head, TOR(0.036, 0.009, 4, 12, Math.PI), mLip, { ...T });
-    onHead(m, 0, -0.07, 0.003, mouthR); m.rotation.z = Math.PI;
+    switch (style) {
+      case 'bald':
+        hairParts.push(blob(-0.226, 0.03, -0.03, 0.03, 0.065, 0.07), blob(0.226, 0.03, -0.03, 0.03, 0.065, 0.07));
+        hp.push({ g: capGeo(0.55), c: shade(skin, 1.1), s: [HX + 0.003, HY + 0.003, HZ + 0.003], r: [-0.45, 0, 0] });
+        break;
+      case 'long':
+        hairParts.push(cap(1.44, -0.4), blob(-0.1, 0.16, 0.12, 0.11, 0.055, 0.09, 0.3), blob(0.0, 0.18, 0.13, 0.1, 0.05, 0.09), blob(0.1, 0.16, 0.12, 0.11, 0.055, 0.09, -0.3),
+          blob(-0.222, -0.06, 0.01, 0.05, 0.155, 0.1), blob(0.222, -0.06, 0.01, 0.05, 0.155, 0.1), blob(0, -0.07, -0.13, 0.25, 0.22, 0.12));
+        break;
+      case 'bun':
+        hairParts.push(cap(1.4, -0.42)); fringe(0.9);
+        hairParts.push(blob(0, 0.255, -0.07, 0.092, 0.085, 0.092), { g: TOR(0.07, 0.014, 6, 16), c: accent, p: [0, 0.2, -0.05], r: [PI / 2 - 0.5, 0, 0] });
+        break;
+      case 'curly':
+        hairParts.push(cap(1.3, -0.4));
+        for (const [x, y, z, r] of [[-0.12, 0.2, 0.1, 0.1], [0.12, 0.2, 0.1, 0.1], [-0.2, 0.08, 0.0, 0.1], [0.2, 0.08, 0.0, 0.1], [0, 0.27, 0.0, 0.11], [-0.13, 0.1, -0.16, 0.1], [0.13, 0.1, -0.16, 0.1], [0, 0.18, -0.17, 0.1]]) hairParts.push(blob(x, y, z, r, r, r));
+        break;
+      case 'ponytail':
+        hairParts.push(cap(1.4, -0.42)); fringe(0.95);
+        hairParts.push(blob(0, 0.13, -0.2, 0.065, 0.065, 0.065), { g: T(0.07, 0.03, 0.22, 12), c: hairC, p: [0, 0.14, -0.21], d: [0, -0.8, -0.6] }, { g: TOR(0.06, 0.012, 6, 14), c: accent, p: [0, 0.135, -0.205], r: [PI / 2 - 1.0, 0, 0] });
+        break;
+      case 'spiky':
+        hairParts.push(cap(1.3, -0.4), spike(0, 0.95, 0.1, 0.09), spike(-0.6, 0.75, 0.2), spike(0.6, 0.75, 0.2), spike(-0.3, 0.7, 0.65, 0.06), spike(0.35, 0.72, 0.6, 0.06), spike(-0.7, 0.55, -0.4), spike(0.7, 0.55, -0.4), spike(0, 0.6, -0.8, 0.08), spike(0.1, 0.85, -0.35, 0.08));
+        break;
+      case 'slick':
+        hairParts.push(cap(1.36, -0.45), blob(0.0, 0.205, 0.095, 0.19, 0.07, 0.12, 0, -0.35), blob(-0.1, 0.16, 0.12, 0.1, 0.05, 0.08, 0.25), blob(0.12, 0.16, 0.1, 0.09, 0.045, 0.08, -0.3));
+        break;
+      default: // short, side swept
+        hairParts.push(cap(1.4, -0.42)); fringe(1);
+    }
   }
+  hp.push(...hairParts);
 
-  buildHair(head, look.hairStyle || 'short', mHair, look.accessory === 'hat', mAcc, r, male);
-  buildHeadAccessory(head, look.accessory || null, { mHair, mDark, mat, mAcc, mGold, outfit, mOutfit, mOutDark, male, seed });
-  // neck accessories live on the torso
-  buildNeckAccessory(g, look.accessory || null, { mAcc, mat, accent, outfit });
+  // hat
+  if (hat) {
+    const hc = (seed >> 2) % 2 ? accent : shade(outfit, 0.95), hc2 = shade(hc, 0.72);
+    const kind = female ? ['beret', 'straw', 'bucket', 'cap'][(seed >> 4) % 4] : ['cap', 'bucket', 'cap', 'straw'][(seed >> 4) % 4];
+    const dome = (theta, tilt, grow, c) => ({ g: capGeo(theta), c, s: [HX + grow, HY + grow, HZ + grow], r: [tilt, 0, 0] });
+    if (kind === 'cap') {
+      hp.push(dome(1.3, -0.26, 0.032, hc), { g: U(16, 10), c: hc2, p: [0, 0.098, 0.228], s: [0.135, 0.018, 0.105], r: [0.28, 0, 0] }, { g: U(), c: hc2, p: [0, 0.262, -0.04], s: [0.025, 0.02, 0.025] });
+    } else if (kind === 'bucket') {
+      hp.push(dome(1.5, -0.1, 0.03, hc), { g: brimGeo(0.2, 0.33, 0.03, 0.022), c: hc, p: [0, 0.075, 0.01], r: [-0.06, 0, 0] }, { g: TOR(0.26, 0.016, 6, 28), c: hc2, p: [0, 0.095, 0.0], r: [PI / 2 - 0.06, 0, 0] });
+    } else if (kind === 'beret') {
+      hp.push({ g: U(18, 11), c: hc, p: [0.03, 0.168, -0.005], s: [0.275, 0.1, 0.265], r: [0.12, 0, -0.14] }, { g: U(), c: hc2, p: [0.02, 0.265, -0.01], s: [0.022, 0.03, 0.022] });
+    } else {
+      const straw = '#ecc873';
+      hp.push(dome(1.45, -0.1, 0.03, straw), { g: brimGeo(0.2, 0.365, 0.035, 0.022), c: shade(straw, 1.08), p: [0, 0.078, 0.01], r: [-0.04, 0, 0] }, { g: TOR(0.255, 0.022, 6, 28), c: accent, p: [0, 0.1, 0.0], r: [PI / 2 - 0.06, 0, 0] });
+    }
+  }
+  // face accessories
+  const dark = '#3a3550';
+  if (look.accessory === 'glasses') {
+    for (const sx of [-1, 1]) {
+      fp(TOR(0.067, 0.0095, 5, 14), dark, sx * 0.098, -0.005, 0.02);
+      const A = hframe(sx * 0.163, -0.005, 0.02).elements, Bp = new THREE.Vector3(sx * 0.247, -0.005, -0.01), Ap = new THREE.Vector3(A[12], A[13], A[14]);
+      const d = Bp.clone().sub(Ap), len = d.length();
+      hp.push({ g: CAPS(0.007, Math.max(0.01, len - 0.014), 3, 6), c: dark, p: Ap.clone().addScaledVector(d, 0.5).toArray(), d: d.toArray() });
+    }
+    fp(CAPS(0.0075, 0.03, 3, 6), dark, 0, 0.005, 0.022, null, [0, 0, PI / 2]);
+  }
+  if (look.accessory === 'beard') {
+    hp.push({ g: beardGeo, c: hairC, s: [HX + 0.017, HY + 0.017, HZ + 0.017] }, blob(0, -0.172, 0.085, 0.145, 0.065, 0.12));
+    for (const sx of [-1, 1]) fp(U(), hairC, sx * 0.04, -0.056, 0.012, [0.055, 0.024, 0.03], [0, 0, sx * 0.3]);
+  }
+  if (look.accessory === 'mustache') {
+    for (const sx of [-1, 1]) fp(U(), hairC, sx * 0.042, -0.056, 0.012, [0.058, 0.026, 0.032], [0, 0, sx * 0.32]);
+  }
+  const headMesh = new THREE.Mesh(vcMerge(hp), mBody); head.add(headMesh);
 
-  addOutlines(g, 0.014);
+  // eyes
+  const ep = [];
+  const eyeC = '#2a2236';
+  for (const sx of [-1, 1]) {
+    const M = hframe(sx * 0.098, -0.005, -0.004);
+    if (victim) {
+      ep.push({ g: TOR(0.04, 0.0075, 5, 14, PI), c: eyeC, m: M, r: [0, 0, PI], p: [0, 0.02, 0.014] });
+      for (const k of [0, 1]) ep.push({ g: CAPS(0.0045, 0.02, 1, 4), c: eyeC, m: M, p: [sx * (0.036 + k * 0.01), -0.006 - k * 0.012, 0.012], r: [0, 0, -sx * (0.7 + k * 0.4)] });
+    } else {
+      ep.push({ g: U(10, 7), c: eyeC, m: M, s: [0.042, 0.057, 0.03] });
+      ep.push({ g: U(7, 5), c: '#ffffff', m: M, p: [0.014, 0.022, 0.0255], s: [0.0135, 0.0135, 0.007] });
+      ep.push({ g: U(6, 4), c: '#ffffff', m: M, p: [-0.014, -0.02, 0.0252], s: [0.007, 0.007, 0.004] });
+      if (female) for (const k of [0, 1]) ep.push({ g: CAPS(0.0048, 0.024, 1, 4), c: eyeC, m: M, p: [sx * (0.04 + k * 0.004), 0.034 - k * 0.022, 0.012], r: [0, 0, -sx * (0.85 + k * 0.5)] });
+    }
+  }
+  const eyes = new THREE.Mesh(vcMerge(ep, 0.005), mEyes);
+  eyes.position.y = -0.005; head.add(eyes);
 
-  // ---- Held weapon (suspects only), parented to the right arm so it follows the idle sway
+  for (const o of g.children) if (o.isMesh) { o.castShadow = o !== face; o.receiveShadow = true; }
+  for (const grp of [torso, headMesh, eyes, ...arms.map((a) => a.children[0])]) { grp.castShadow = true; grp.receiveShadow = true; }
+
+  // ---- Held weapon (suspects only), right hand (screen right), out to the side
   const weaponId = weapon !== undefined ? weapon : ch.weapon;
   if (weaponId && !victim) {
     const wp = createWeapon3d(weaponId, mats);
-    // Brandished up and out (arm-local z -1.05 + arm sway ~0.55 = about 30 degrees off vertical, outside the body)
-    // and enlarged so the silhouette reads at the default board camera, including on 16x16.
-    wp.scale.setScalar(2.4); wp.position.set(0.02, -0.2, 0.07); wp.rotation.set(0.2, 0, -1.05);
+    wp.scale.setScalar(1.45); wp.position.set(0.0, -0.195, 0.012); wp.rotation.set(0.28, 0, -0.95);
     arms[1].add(wp);
-  }  // (added after outlining; the prop outlines itself)
+    arms[1].rotation.z = 0.62;
+  }
 
-  const ph = (seed % 1000) / 1000 * Math.PI * 2;
+  const ph = (seed % 1000) / 1000 * PI * 2;
   const blinkOff = (seed % 997) / 997 * 4;
+  const baseR = [arms[0].rotation.z, arms[1].rotation.z];
   g.userData.idle = (t) => {
-    const b = Math.sin(t * 2.2 + ph);
-    const k = 0.022 * b;
-    torsoG.scale.set(1 - k * 0.5, 1 + k, 1 - k * 0.5);
-    head.position.y = HEAD_Y + (0.5 - TY0 + 0.0) * k * 0.55;
+    const b = Math.sin(t * 2.2 + ph), k = 0.022 * b;
+    torso.scale.set((male ? 1.07 : 1) * (1 - k * 0.5), 1 + k, 1 - k * 0.5);
+    head.position.y = HEAD_Y + 0.25 * k;
     head.rotation.z = 0.05 * Math.sin(t * 0.8 + ph);
     head.rotation.y = 0.07 * Math.sin(t * 0.5 + ph * 2);
-    head.rotation.x = 0.015 * Math.sin(t * 1.1 + ph);
-    const bt = (t + blinkOff) % 4.3;
-    const s = bt < 0.14 ? 0.12 : 1;
-    for (const e of eyes) e.scale.y = s;
-    arms[0].rotation.z = -0.55 - 0.05 * b; arms[1].rotation.z = 0.55 + 0.05 * b;
+    head.rotation.x = 0.02 * Math.sin(t * 1.1 + ph);
+    if (!victim) eyes.scale.y = ((t + blinkOff) % 4.3) < 0.14 ? 0.1 : 1;
+    arms[0].rotation.z = baseR[0] - 0.05 * b; arms[1].rotation.z = baseR[1] + 0.04 * b;
   };
 
   g.userData.materials = mats;
   g.userData.character = ch;
   return g;
-}
-
-function BOXs(w, h, d) { return RB(w, h, d, Math.min(w, h, d) * 0.3, 1); }
-
-function buildHair(head, style, mHair, hasHat, mAcc, r, male = false) {
-  const R = HEAD_R + 0.012;
-  const cap = (theta, tilt = -0.5, rr = R) => add(head, capGeo(theta, rr), mHair, { rot: [tilt, 0, 0] });
-  const ball = (x, y, z, s, sc = [1, 1, 1]) => ({ geo: SPH(s, 10, 8), pos: [x, y, z], scale: sc });
-  switch (style) {
-    case 'bald': {
-      addMerged(head, [ball(-0.2, 0.05, -0.04, 0.05, [0.6, 1.2, 1.2]), ball(0.2, 0.05, -0.04, 0.05, [0.6, 1.2, 1.2]), ball(-0.19, 0.09, 0.0, 0.04, [0.6, 1, 1]), ball(0.19, 0.09, 0.0, 0.04, [0.6, 1, 1])], mHair);
-      if (!hasHat && !male) {
-        add(head, TOR(0.025, 0.007, 4, 10, Math.PI * 1.5), mHair, { pos: [0.0, 0.215, 0.025], rot: [-Math.PI / 2 + 0.2, 0, 0.5], ...T });
-        add(head, CONE(0.012, 0.04, 5), mHair, { pos: [0.0, 0.24, 0.025], ...T });
-      }
-      break;
-    }
-    case 'long': {
-      cap(1.58, -0.5);
-      addMerged(head, [
-        { geo: SPH(0.2, 16, 12), pos: [0, -0.04, -0.12], scale: [1.08, 1.45, 0.7] },
-        { geo: CAPS(0.055, 0.15, 4, 8), pos: [-0.2, -0.07, 0.0] }, { geo: CAPS(0.055, 0.15, 4, 8), pos: [0.2, -0.07, 0.0] },
-        ball(-0.065, 0.185, 0.115, 0.07, [1.3, 0.8, 0.8]), ball(0.075, 0.18, 0.12, 0.07, [1.3, 0.8, 0.8]), ball(0.0, 0.2, 0.1, 0.06, [1.2, 0.8, 0.8]),
-      ], mHair);
-      break;
-    }
-    case 'bun': {
-      cap(1.58, -0.5);
-      addMerged(head, [ball(-0.07, 0.185, 0.115, 0.065, [1.3, 0.8, 0.8]), ball(0.07, 0.185, 0.115, 0.065, [1.3, 0.8, 0.8]), ball(0, 0.2, 0.11, 0.055, [1.2, 0.8, 0.8])], mHair);
-      if (!hasHat) {
-        add(head, SPH(0.095, 14, 10), mHair, { pos: [0, 0.255, -0.09] });
-        add(head, TOR(0.09, 0.016, 6, 16), mAcc, { pos: [0, 0.215, -0.09], rot: [Math.PI / 2, 0, 0], ...T });
-        add(head, SPH(0.02, 6, 5), mAcc, { pos: [0.0, 0.31, -0.09], ...T });
-      }
-      break;
-    }
-    case 'curly': {
-      cap(1.4, -0.45, HEAD_R + 0.005);
-      const parts = [];
-      const ring = (polar, n, rad, skipFront) => {
-        for (let i = 0; i < n; i++) {
-          const a = (i / n) * Math.PI * 2 + 0.3;
-          const x = Math.sin(a), z = Math.cos(a); // z>0 = front
-          if (skipFront && z > 0.55) continue;
-          const sp = Math.sin(polar), cp = Math.cos(polar);
-          parts.push({ geo: SPH(rad, 10, 8), pos: [x * sp * 0.225, cp * 0.225 + 0.005, z * sp * 0.225 - 0.01] });
-        }
-      };
-      if (male) { // short tight curls hugging the skull
-        if (!hasHat) ring(0.0, 1, 0.05, false);
-        if (!hasHat) ring(0.55, 7, 0.048, false);
-        ring(1.0, 10, 0.046, true);
-        ring(1.3, 11, 0.042, true);
-        parts.push({ geo: SPH(0.04, 8, 6), pos: [-0.08, 0.165, 0.14] }, { geo: SPH(0.04, 8, 6), pos: [0.0, 0.178, 0.145] }, { geo: SPH(0.04, 8, 6), pos: [0.08, 0.165, 0.14] });
-      } else {
-        if (!hasHat) ring(0.0, 1, 0.085, false);
-        if (!hasHat) ring(0.55, 6, 0.08, false);
-        ring(1.0, 8, 0.075, true);
-        ring(1.35, 9, 0.065, true);
-        // fringe curls
-        parts.push({ geo: SPH(0.06, 10, 8), pos: [-0.09, 0.155, 0.15] }, { geo: SPH(0.06, 10, 8), pos: [0.0, 0.17, 0.155] }, { geo: SPH(0.06, 10, 8), pos: [0.09, 0.155, 0.15] });
-      }
-      addMerged(head, parts, mHair);
-      break;
-    }
-    case 'ponytail': {
-      cap(1.58, -0.5);
-      addMerged(head, [ball(-0.07, 0.185, 0.115, 0.065, [1.3, 0.8, 0.8]), ball(0.07, 0.185, 0.115, 0.065, [1.3, 0.8, 0.8]), ball(0, 0.2, 0.11, 0.055, [1.2, 0.8, 0.8]),
-        ball(0, 0.0, -0.225, 0.07), { geo: SPH(0.075, 12, 10), pos: [0, -0.08, -0.29], scale: [1, 1.35, 0.9] }, { geo: CONE(0.05, 0.2, 8), pos: [0, -0.22, -0.31], rot: [Math.PI, 0, 0] }], mHair);
-      add(head, TOR(0.05, 0.014, 6, 12), mAcc, { pos: [0, 0.0, -0.245], rot: [0.3, 0, 0], ...T });
-      break;
-    }
-    case 'spiky': {
-      cap(1.45, -0.45, HEAD_R + 0.004);
-      const parts = [];
-      const spike = (dir, len, w) => parts.push({ geo: CONE(w, len, 6), dir, pos: [dir[0] * 0.2, dir[1] * 0.2 + 0.005, dir[2] * 0.2 - 0.01].map((v, i) => v + dir[i] * len * 0.45) });
-      if (!hasHat) {
-        spike([0, 1, -0.1], 0.18, 0.065);
-        for (let i = 0; i < 6; i++) {
-          const a = (i / 6) * Math.PI * 2 + 0.2;
-          spike([Math.sin(a) * 0.75, 0.75, Math.cos(a) * 0.65 - 0.15], 0.15, 0.055);
-        }
-      }
-      for (let i = 0; i < 7; i++) {
-        const a = Math.PI * (0.55 + i * 0.15); // back half
-        spike([Math.sin(a) * 1.0, 0.25, -Math.abs(Math.cos(a)) - 0.2], 0.14, 0.05);
-      }
-      parts.push({ geo: CONE(0.05, 0.12, 6), dir: [-0.3, 0.55, 1], pos: [-0.07, 0.19, 0.17] }, { geo: CONE(0.05, 0.12, 6), dir: [0.3, 0.55, 1], pos: [0.07, 0.19, 0.17] });
-      addMerged(head, parts, mHair);
-      break;
-    }
-    case 'slick': { // short side-part, swept sideways
-      cap(1.58, -0.52);
-      const fr = [[-0.12, 0.15, 0.14, -0.15], [-0.04, 0.165, 0.145, -0.1], [0.04, 0.175, 0.14, -0.05], [0.12, 0.165, 0.12, 0.0]];
-      addMerged(head, fr.map(([x, y, z, rz]) => ({ geo: SPH(0.06, 10, 8), pos: [x, y, z], scale: [1.5, 0.55, 0.8], rot: [0, 0, rz] })), mHair);
-      break;
-    }
-    default: { // short
-      cap(1.58, -0.52);
-      const fr = [[-0.1, 0.17, 0.125, -0.25], [-0.02, 0.185, 0.135, 0], [0.07, 0.178, 0.13, 0.2], [0.14, 0.15, 0.1, 0.5]];
-      addMerged(head, fr.map(([x, y, z, rz]) => ({ geo: SPH(0.065, 10, 8), pos: [x, y, z], scale: [1.3, 0.8, 0.8], rot: [0, 0, rz] })), mHair);
-      if (!hasHat && !male) add(head, CONE(0.035, 0.09, 6), mHair, { pos: [0.02, 0.225, 0.02], rot: [0.2, 0, -0.35], ...T });
-    }
-  }
-}
-
-function buildHeadAccessory(head, kind, { mHair, mDark, mat, mAcc, mGold, outfit, male = false, seed = 0 }) {
-  switch (kind) {
-    case 'hat': {
-      const hg = new THREE.Group(); hg.position.set(0, 0.0, 0); hg.rotation.set(-0.06, 0, 0.05); head.add(hg);
-      const mHat = mat(shade(outfit, 0.85));
-      if (male && seed % 2 === 0) { // baseball cap: dome, front visor, button
-        add(hg, new THREE.SphereGeometry(0.245, 24, 14, 0, Math.PI * 2, 0, 1.1), mHat, { rot: [-0.05, 0, 0] });
-        add(hg, new THREE.CylinderGeometry(0.2, 0.2, 0.02, 20, 1, false, -Math.PI / 2, Math.PI), mat(shade(outfit, 0.65)), { pos: [0, 0.105, 0.1], rot: [0.14, 0, 0] });
-        add(hg, SPH(0.02, 8, 6), mAcc, { pos: [0, 0.245, 0], ...T });
-        break;
-      }
-      if (male) { // fedora: narrower brim, taller crown, hat band
-        add(hg, CYL(0.27, 0.27, 0.018, 28), mHat, { pos: [0, 0.125, 0] });
-        add(hg, CYL(0.165, 0.19, 0.17, 24), mHat, { pos: [0, 0.21, 0] });
-        add(hg, CYL(0.15, 0.15, 0.012, 24), mat(shade(outfit, 0.6)), { pos: [0, 0.297, 0], ...T });
-        add(hg, CYL(0.192, 0.196, 0.04, 24), mAcc, { pos: [0, 0.157, 0], noOutline: true });
-        break;
-      }
-      add(hg, CYL(0.3, 0.3, 0.022, 28), mHat, { pos: [0, 0.135, 0] });
-      add(hg, CYL(0.17, 0.2, 0.16, 24), mHat, { pos: [0, 0.21, 0] });
-      add(hg, CYL(0.165, 0.165, 0.012, 24), mat(shade(outfit, 1.2)), { pos: [0, 0.294, 0], ...T });
-      add(hg, CYL(0.192, 0.2, 0.04, 24), mAcc, { pos: [0, 0.158, 0], noOutline: true });
-      add(hg, RB(0.05, 0.04, 0.02, 0.008, 1), mGold, { pos: [0, 0.158, 0.2], ...T });
-      break;
-    }
-    case 'glasses': {
-      const frame = mat('#3a3550');
-      for (const sx of [-1, 1]) {
-        const rim = add(head, TOR(0.062, 0.0085, 6, 20), frame, { ...T });
-        onHead(rim, sx * 0.088, 0.025, 0.014);
-        const lens = add(head, new THREE.CircleGeometry(0.058, 16), new THREE.MeshStandardMaterial({ color: '#cfe8ff', roughness: 0.15, transparent: true, opacity: 0.28 }), { ...T });
-        onHead(lens, sx * 0.088, 0.025, 0.011);
-        const tmp = add(head, CAPS(0.006, 0.12, 2, 5), frame, { ...T });
-        tmp.position.set(sx * 0.2, 0.03, 0.07); tmp.rotation.set(Math.PI / 2, 0, 0); tmp.rotation.z = sx * 0.1;
-      }
-      add(head, CAPS(0.006, 0.03, 2, 5), frame, { pos: [0, 0.03, headZ(0, 0.03) + 0.014], rot: [0, 0, Math.PI / 2], ...T });
-      break;
-    }
-    case 'beard': {
-      const phiStart = Math.PI / 2 - 1.2;
-      add(head, new THREE.SphereGeometry(HEAD_R + 0.012, 20, 12, phiStart, 2.4, 1.78, 0.9), mHair, { rot: [0.05, 0, 0] });
-      add(head, SPH(0.06, 10, 8), mHair, { pos: [0, -0.205, 0.1], scale: [1.2, 1, 0.9], ...T });
-      const must = [-1, 1].map((sx) => ({ geo: CAPS(0.018, 0.05, 3, 6), pos: [sx * 0.03, -0.045, headZ(sx * 0.03, -0.045) + 0.012], rot: [0, 0, Math.PI / 2 - sx * 0.35] }));
-      addMerged(head, must, mHair, T);
-      break;
-    }
-    case 'mustache': {
-      const must = [-1, 1].map((sx) => ({ geo: CAPS(0.02, 0.06, 3, 6), pos: [sx * 0.04, -0.045, headZ(sx * 0.04, -0.045) + 0.012], rot: [0, 0, Math.PI / 2 - sx * 0.45] }));
-      must.push({ geo: SPH(0.02, 8, 6), pos: [0, -0.038, headZ(0, -0.038) + 0.012] });
-      addMerged(head, must, mHair, T);
-      break;
-    }
-    default: break;
-  }
-}
-
-function buildNeckAccessory(g, kind, { mAcc, mat, accent, outfit }) {
-  const neckY = 0.47;
-  if (kind === 'bowtie') {
-    const z = torsoZ(0, neckY, 0.025);
-    for (const sx of [-1, 1]) add(g, CONE(0.04, 0.075, 8), mAcc, { pos: [sx * 0.045, neckY, z], rot: [0, 0, -sx * Math.PI / 2], scale: [1, 1, 0.55], ...T });
-    add(g, SPH(0.022, 8, 6), mat(shade(accent, 0.8)), { pos: [0, neckY, z + 0.004], ...T });
-  } else if (kind === 'scarf') {
-    const m2 = mat(shade(accent, 1.45));
-    add(g, TOR(0.13, 0.048, 8, 22), mAcc, { pos: [0, neckY - 0.005, -0.005], rot: [Math.PI / 2 - 0.12, 0, 0] });
-    add(g, TOR(0.133, 0.012, 6, 22), m2, { pos: [0, neckY + 0.004, -0.004], rot: [Math.PI / 2 - 0.12, 0, 0], ...T });
-    const z = torsoZ(0.07, 0.36, 0.03);
-    add(g, RB(0.075, 0.2, 0.03, 0.012, 2), mAcc, { pos: [0.075, 0.37, z - 0.005], rot: [-0.25, 0, -0.08] });
-    add(g, RB(0.077, 0.03, 0.032, 0.01, 1), m2, { pos: [0.082, 0.31, z + 0.005], rot: [-0.25, 0, -0.08], ...T });
-    for (let i = 0; i < 3; i++) add(g, CAPS(0.005, 0.03, 2, 4), m2, { pos: [0.058 + i * 0.02, 0.27, z + 0.012], rot: [-0.25, 0, -0.08], ...T });
-  }
 }

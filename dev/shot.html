@@ -25,7 +25,16 @@ const HC = ['#2b1b10', '#d9a441', '#b5371f', '#3fa7d6', '#c451c4', '#e8e8e8', '#
 const OC = ['#4f86c6', '#e63946', '#06d6a0', '#ffd23f', '#8338ec', '#ff7b00', '#2ec4b6', '#f472b6', '#3a86ff'];
 let puzzle, placements = {};
 const mode = q.get('m');
-if (mode) {
+if (mode === 'portraits') { // grid of BoardView.portrait() images
+  const n = num('n', 14), px = num('px', 200);
+  document.body.style.cssText += ';background:#d8c9a8;overflow:auto';
+  const wrap = document.createElement('div'); puzzle = CASES[0]; wrap.style.cssText = 'position:fixed;inset:0;z-index:5;background:#d8c9a8;display:flex;flex-wrap:wrap;gap:6px;padding:6px;align-content:flex-start'; document.body.appendChild(wrap);
+  for (let i = 0; i < n; i++) {
+    const ch = { id: String.fromCharCode(65 + i), name: 'N' + i, gender: i % 2 ? 'f' : 'm', victim: i === n - 1, look: { skin: SKIN[i % 5], hair: HC[i % 7], outfit: OC[i % 9], hairStyle: HAIR[(i >> 1) % 7], accessory: ACC[(i * 3) % 7] } };
+    const im = new Image(); im.src = BoardView.portrait(ch, px); im.style.cssText = `width:${px}px;height:${px}px;background:#eef2d8;border-radius:12px`; wrap.appendChild(im);
+  }
+  window.__ready = true;
+} else if (mode) {
   const list = mode === 'floors' ? FLOOR_TYPES : mode === 'objects' ? (q.get('o') ? q.get('o').split(',') : Object.keys(OBJECT_TYPES)) : mode === 'weapons' ? WEAPON3D_IDS : Array.from({ length: num('n', 16) }, (_, i) => i);
   const N = num('size', Math.ceil(Math.sqrt(list.length)));
   const objects = [], characters = [];

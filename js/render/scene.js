@@ -249,7 +249,7 @@ export class BoardView {
       decor: toonMat('#ffffff'),
       // Grass tufts: vertex-shader wind sway, bending more towards the tip (position.y), phase from instance position.
       decorWind: (() => {
-        const m = toonMat('#ffffff');
+        const m = toonMat('#ffffff', { vertexColors: true });
         const U = this._timeU;
         m.onBeforeCompile = (sh) => {
           sh.uniforms.uWTime = U;

@@ -54,10 +54,10 @@ export const MOODS = {
     grade: { exposure: 1.0, saturation: 1.1, contrast: 1.04, shadowTint: '#4a2f8f', tintAmt: 0.14, vignette: 0.22, aoTint: '#54357a' },
   },
   night: {
-    sky: '#3a3fa8', horizon: '#6a58c8', ground: '#3a2f78', fog: '#3c3a94',
-    sun: ['#a9bcff', 3.0], sunDir: [0.5, 1, 0.45], hemi: ['#9aa4ff', '#c58ae0', 1.9], fill: ['#ff9ad0', 0.35], rim: ['#8fd0ff', 0.7],
-    env: 0.6, shadow: 0.72, lamp: 7, glow: 1,
-    grade: { exposure: 1.12, saturation: 1.12, contrast: 1.04, shadowTint: '#2c2aa0', tintAmt: 0.2, vignette: 0.3, aoTint: '#2c2670' },
+    sky: '#2f37b8', horizon: '#6a4fd0', ground: '#2c2a86', fog: '#3038a0',
+    sun: ['#8ea2ff', 2.1], sunDir: [0.5, 1, 0.45], hemi: ['#6f7cff', '#9a5ad0', 1.25], fill: ['#ff86c8', 0.4], rim: ['#7fc8ff', 0.8],
+    env: 0.42, shadow: 0.8, lamp: 9, glow: 1,
+    grade: { exposure: 1.1, saturation: 1.22, contrast: 1.1, shadowTint: '#1c1fa8', tintAmt: 0.22, vignette: 0.3, aoTint: '#221f78' },
   },
 };
 

@@ -2,9 +2,9 @@
 import * as THREE from 'three';
 
 export const DEG = Math.PI / 180;
-export const FRAME_W = 0.34;      // outer frame width
-export const FRAME_TOP = 0.22;    // frame top above the floor
-export const WALL_T = 0.075;      // room wall thickness
+export const FRAME_W = 0.5;       // outer frame width
+export const FRAME_TOP = 0.18;    // frame top above the floor
+export const WALL_T = 0.11;       // room wall thickness
 export const WALL_H = 0.17;       // room wall height (incl. cap)
 export const OUTDOOR = new Set(['grass', 'sand', 'snow']);
 export const keyOf = (r, c) => `${r},${c}`;
