@@ -4,13 +4,16 @@ import { add, toon, toonOwn, SPH } from './kit.js';
 
 export const PI = Math.PI;
 export const C = {
-  wood: '#c98b55', woodLight: '#dba570', woodDark: '#9b6238', woodDeep: '#7a4a2c',
+  wood: '#e0a263', woodLight: '#f2c486', woodDark: '#b8763f', woodDeep: '#8f5733',
+  teal: '#3fb8af', coral: '#ef6f5e', sun: '#f7c948', plum: '#9a63b5', sky: '#5aa8e0', mint: '#7fd0a0', cream2: '#f3e7cc',
   leaf: '#6cc56a', leaf2: '#86d67a', leaf3: '#4fae5a', leaf4: '#3d9a50',
   stone: '#aaa6b8', stoneLight: '#c8c4d4', stoneDark: '#8a869a', metal: '#cfd3dc', cream: '#f6f1e6', dark: '#3a3550', red: '#e06060',
   flameO: '#ff8a2a', flameY: '#ffd84d', gold: '#f2c14e', white: '#fffdf6',
 };
 export const T = { noOutline: true, shadow: false };
-export const BOOKS = ['#e06060', '#4f86c6', '#6cc56a', '#f2c14e', '#a06ad8', '#f2994a', '#3fb8af', '#d95d92', '#7a4a2c', '#5b6fd6'];
+export const BOOKS = ['#ef6f5e', '#5aa8e0', '#7fd0a0', '#f7c948', '#9a63b5', '#f2994a', '#3fb8af', '#e86a9c', '#f3e7cc', '#5b6fd6'];
+/** Cheerful painted-furniture colours (picked from the seed for variety). */
+export const PAINTS = ['#3fb8af', '#ef6f5e', '#f7c948', '#9a63b5', '#5aa8e0', '#f3e7cc', '#7fd0a0'];
 
 export const flameMat = (c, i = 0.9) => toon(c, { emissive: c, emissiveIntensity: i });
 /** Rising steam puffs: one translucent material, scale/position only (no per-frame allocation). Returns update(t). */
