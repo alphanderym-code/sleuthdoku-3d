@@ -45,10 +45,10 @@ export function toHex(col) { try { return '#' + new THREE.Color(col).getHexStrin
 export function wrap9(S, fn) { for (const dx of [-S, 0, S]) for (const dy of [-S, 0, S]) fn(dx, dy); }
 
 export const FLOOR_BASE = {
-  wood: '#f0c690', tile: '#aee8dd', grass: '#c3dc4e', sand: '#f9d6a0',
-  stone: '#e3d8c8', carpet: '#e5799c', snow: '#fcf6ec', checker: '#fff0c6',
+  wood: '#f0c690', tile: '#aee8dd', grass: '#c0c84a', sand: '#f9d6a0',
+  stone: '#d6c8b6', carpet: '#e5799c', snow: '#fcf6ec', checker: '#fff0c6',
   water: '#4cc6c8', brick: '#e29c78', dirt: '#dcb282',
-  fairway: '#aada58', green: '#bdea68', // golf (Extreme scenes)
+  fairway: '#a8c653', green: '#b9d45e', // golf (Extreme scenes)
 };
 
 /** Soft-edged (plateau) elliptical colour patch, drawn at the 9 wrap offsets so it tiles. */
@@ -318,31 +318,6 @@ export function floorTexture(type) {
 
 
 /** Wood texture for the outer frame. */
-export function frameWoodTexture() {
-  const S = 512, cv = makeCanvas(S, S), x = cv.getContext('2d');
-  const r = prng(4242);
-  x.fillStyle = '#c08856'; x.fillRect(0, 0, S, S);
-  for (let i = 0; i < 90; i++) {
-    const y = r() * S;
-    x.strokeStyle = r() < 0.6 ? 'rgba(90,50,25,0.2)' : 'rgba(255,225,180,0.2)';
-    x.lineWidth = 1 + r() * 2.5;
-    x.beginPath(); x.moveTo(0, y);
-    const a = (r() - 0.5) * 14;
-    x.bezierCurveTo(S * 0.3, y + a, S * 0.7, y - a, S, y);
-    x.stroke();
-  }
-  for (let i = 0; i < 5; i++) {
-    const kx = r() * S, ky = r() * S;
-    x.fillStyle = 'rgba(80,45,20,0.3)';
-    x.beginPath(); x.ellipse(kx, ky, 10, 5, 0, 0, 7); x.fill();
-    x.strokeStyle = 'rgba(80,45,20,0.22)'; x.lineWidth = 1.5;
-    x.beginPath(); x.ellipse(kx, ky, 18, 9, 0, 0, 7); x.stroke();
-  }
-  const t = canvasTexture(cv, false);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  return t;
-}
-
 /** Chunky painted / chalky X mark. */
 export function xMarkTexture(color, outline, seed) {
   const S = 256, cv = makeCanvas(S, S), x = cv.getContext('2d');
@@ -406,24 +381,6 @@ export function chipTexture(letter, color) {
   x.lineWidth = 10; x.lineJoin = 'round'; x.strokeStyle = '#2b2b3a'; x.strokeText(letter, S / 2, S / 2);
   x.fillStyle = '#ffffff'; x.fillText(letter, S / 2, S / 2);
   return canvasTexture(cv);
-}
-
-export function backgroundTexture() {
-  const S = 512, cv = makeCanvas(S, S), x = cv.getContext('2d');
-  const g = x.createLinearGradient(0, 0, 0, S);
-  g.addColorStop(0, '#ffe8d4'); g.addColorStop(0.5, '#f6e0ef'); g.addColorStop(1, '#d5d9f6');
-  x.fillStyle = g; x.fillRect(0, 0, S, S);
-  const r = prng(99);
-  for (let i = 0; i < 9; i++) {
-    const cx = r() * S, cy = r() * S * 0.6, rad = 40 + r() * 90;
-    const bg = x.createRadialGradient(cx, cy, 0, cx, cy, rad);
-    bg.addColorStop(0, 'rgba(255,255,255,0.16)'); bg.addColorStop(1, 'rgba(255,255,255,0)');
-    x.fillStyle = bg; x.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
-  }
-  const v = x.createRadialGradient(S / 2, S * 0.45, S * 0.3, S / 2, S * 0.5, S * 0.78);
-  v.addColorStop(0, 'rgba(90,70,140,0)'); v.addColorStop(1, 'rgba(90,70,140,0.16)');
-  x.fillStyle = v; x.fillRect(0, 0, S, S);
-  return canvasTexture(cv, false);
 }
 
 export function blobShadowTexture() {

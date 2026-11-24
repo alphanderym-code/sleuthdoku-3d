@@ -43,9 +43,9 @@ export function defaultMood(puzzle) { return MOOD_OF[sceneKeyOf(puzzle)] || 'day
 export const MOODS = {
   day: {
     sky: '#a9dcf5', horizon: '#e9f6e6', ground: '#b9c98a', fog: '#cfeaf0',
-    sun: ['#fff0cf', 3.3], sunDir: [-0.62, 1, 0.42], hemi: ['#b9d4ff', '#ffdcae', 0.95], fill: ['#b7c8ff', 0.35], rim: ['#fff3dc', 0.45],
-    env: 0.42, shadow: 0.86, lamp: 0, glow: 0,
-    grade: { exposure: 1.0, saturation: 1.12, contrast: 1.03, shadowTint: '#2a3a8c', tintAmt: 0.10, vignette: 0.16, aoTint: '#4a3f7a' },
+    sun: ['#ffe6b8', 3.3], sunDir: [-0.62, 1, 0.42], hemi: ['#a9c4ff', '#ffcf9a', 0.8], fill: ['#b0c0ff', 0.3], rim: ['#fff3dc', 0.4],
+    env: 0.36, shadow: 0.92, lamp: 0, glow: 0,
+    grade: { exposure: 0.98, saturation: 1.12, contrast: 1.07, shadowTint: '#26378f', tintAmt: 0.14, vignette: 0.16, aoTint: '#463b7c' },
   },
   golden: {
     sky: '#ffc9a0', horizon: '#ffe3b8', ground: '#c9a27a', fog: '#f7cfa8',

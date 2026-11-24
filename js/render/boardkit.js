@@ -67,6 +67,8 @@ function bkMats(view) {
     wall: softMat({ color: '#ffffff', vertexColors: true, roughness: 0.72 }),
     kerb: softMat({ color: '#ffffff', vertexColors: true, roughness: 0.85 }),
     decor: softMat({ color: '#ffffff', vertexColors: true, roughness: 0.8 }),
+    // Plaques are drawn in the transparent pass without depth writes, so floor overlays (notes, X marks, hover)
+    // that a leaning plaque would cover still show through; tokens/objects in front still hide it.
     plaque: softMat({ color: '#6c4a82', roughness: 0.6, transparent: true, depthWrite: false }),
     plaqueTop: softMat({ color: '#6c4a82', roughness: 0.6, depthTest: false }),
   };
@@ -267,15 +269,15 @@ export const boardKit = {
       return tinted(extrudeSlab(outer, top - bottom - 2 * bev, top, bev), hex, tone);
     };
     const body = mergeGeometries([
-      ring(half + F + 0.26, 0.55, -0.27, 0.1, '#e2d0aa'),
-      ring(half + F, 0.14, FRAME_TOP - 0.05, 0.05, '#eddcb8'),
+      ring(half + F + 0.26, 0.55, -0.27, 0.1, '#cdb189'),
+      ring(half + F, 0.14, FRAME_TOP - 0.05, 0.05, '#d9c098'),
     ]);
     const kerb = new THREE.Mesh(body, bkMats(this).kerb);
     kerb.castShadow = true; kerb.receiveShadow = true;
     group.add(kerb);
     // paving slabs on top: corner pieces plus ~1-cell pieces along each side, with thin joints
     const slabs = [], th = 0.075, y = FRAME_TOP - th / 2 - 0.004, gap = 0.028;
-    const slab = (cx, cz, w, d, i) => slabs.push(tinted(rbox(w, th, d, 0.03, 3).translate(cx, y, cz), i % 2 ? '#f7edd4' : '#f3e7cb'));
+    const slab = (cx, cz, w, d, i) => slabs.push(tinted(rbox(w, th, d, 0.03, 3).translate(cx, y, cz), i % 2 ? '#ecd8b5' : '#e4cda6'));
     const mid = half + F / 2, m = Math.max(1, Math.round(N / 0.9)), step = N / m;
     let q = 0;
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) slab(sx * mid, sz * mid, F - gap, F - gap, q++);
@@ -294,11 +296,11 @@ export const boardKit = {
 
   /** Chess-style coordinates on the kerb: letters a.. for columns (bottom + top), numbers 1.. for rows (left + right); row 1 is the north (far) row. */
   _buildCoordLabels(board) {
-    const N = this.N, half = N / 2, y = FRAME_TOP + 0.06;
+    const N = this.N, half = N / 2;
     const ls = this._labelSize = 0.3 * THREE.MathUtils.clamp(N / 9, 1, 1.8); // readable at 16x16
     const off = half + Math.max(FRAME_W / 2, ls / 2 + 0.04);
     // Room plaques lean back over the top edge; keep the top letters clear of them.
-    const topOff = Math.max(off, half + 0.8 * (0.2 + 0.018 * N) + ls * 0.6);
+    const topOff = Math.max(off, half + 1.3 * (0.2 + 0.018 * N) + ls * 0.8);
     this._labelOff = off; this._labelTopOff = topOff;
     const group = new THREE.Group(); group.name = 'coords';
     const cache = new Map();
@@ -316,7 +318,7 @@ export const boardKit = {
     };
     const add = (txt, x, z) => {
       const s = new THREE.Sprite(labelMat(txt));
-      s.scale.set(ls * 1.2, ls * 1.2, 1); s.position.set(x, y + (ls - 0.3) / 2, z); s.raycast = noRaycast; s.renderOrder = 5;
+      s.scale.set(ls * 1.2, ls * 1.2, 1); s.position.set(x, FRAME_TOP + ls * 0.5, z); s.raycast = noRaycast; s.renderOrder = 5;
       group.add(s);
     };
     for (let i = 0; i < N; i++) {

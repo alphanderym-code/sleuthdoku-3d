@@ -3,12 +3,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
-  makeCanvas, canvasTexture, prng, hashStr, toHex, FLOOR_BASE, floorTexture, frameWoodTexture, xMarkTexture, chipTexture,
+  makeCanvas, canvasTexture, prng, hashStr, toHex, FLOOR_BASE, floorTexture, xMarkTexture, chipTexture,
   blobShadowTexture, glowTileTexture, ringTexture,
 } from './textures.js';
 import { DEG, FRAME_W, FRAME_TOP, keyOf, noRaycast } from './layout.js';
 import { boardKit } from './boardkit.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { OBJECT_TYPES } from '../model/objects.js';
 import {
   createObject, createFigurine, disposeObject, standInfo, softMat, setGlow,
@@ -16,6 +15,7 @@ import {
 import { MOODS, defaultMood, moodEnvironment } from './moods.js';
 import { Post } from './post.js';
 import { buildWorld } from './world.js';
+import { windU } from './models/foliage.js';
 
 const HOLD_MS = 350;
 const TAP_MOVE_PX = 10;
@@ -206,16 +206,7 @@ export class BoardView {
       shadow: blobShadowTexture(),
       glow: glowTileTexture(),
       ring: ringTexture(),
-      wood: frameWoodTexture(),
     };
-    this._tex.wood.repeat.set(0.45, 0.45);
-    this._tex.wood.anisotropy = this._maxAniso;
-    const tuftParts = [];
-    for (let k = 0; k < 5; k++) {
-      const h = 0.062 + 0.012 * (k % 3);
-      tuftParts.push(new THREE.ConeGeometry(0.017, h, 4).translate(0, h / 2, 0)
-        .rotateZ((k % 2 ? 1 : -1) * (0.18 + 0.08 * k)).rotateY(k * 1.37).translate(Math.cos(k * 2.3) * 0.012, 0, Math.sin(k * 2.3) * 0.012));
-    }
     this._geo = {
       cell: new THREE.PlaneGeometry(0.98, 0.98).rotateX(-Math.PI / 2),
       glow: new THREE.PlaneGeometry(1.04, 1.04).rotateX(-Math.PI / 2),
@@ -224,11 +215,7 @@ export class BoardView {
       ring: new THREE.PlaneGeometry(1.06, 1.06).rotateX(-Math.PI / 2),
       holdRing: new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
       blob: new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
-      tuft: mergeGeometries(tuftParts),
-      head: new THREE.IcosahedronGeometry(0.022, 0),
-      pebble: new THREE.IcosahedronGeometry(0.034, 0).scale(1, 0.55, 0.8).translate(0, 0.008, 0),
     };
-    tuftParts.forEach((g) => g.dispose());
     const toonMat = (color, extra = {}) => softMat({ color, ...extra });
     this._mat = {
       // depthTest off so marks stay visible on chairs/sofas/beds (they never share a cell with a token).
@@ -241,12 +228,6 @@ export class BoardView {
         map: this._tex.shadow, transparent: true, depthWrite: false, toneMapped: false,
         polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2,
       }),
-      wall: toonMat('#584b78'),
-      wallBase: toonMat('#352c4a'),
-      wallCap: toonMat('#a596cc'),
-      frame: toonMat('#ffffff', { map: this._tex.wood }),
-      plinth: toonMat('#4b3450'),
-      decor: toonMat('#ffffff'),
       // Grass tufts: vertex-shader wind sway, bending more towards the tip (position.y), phase from instance position.
       decorWind: (() => {
         const m = toonMat('#ffffff', { vertexColors: true });
@@ -266,10 +247,6 @@ export class BoardView {
         m.customProgramCacheKey = () => 'tuftWind';
         return m;
       })(),
-      // Plaques are drawn in the transparent pass without depth writes, so floor overlays (notes, X marks, hover)
-      // that a leaning plaque would cover still show through; tokens/objects in front still hide it.
-      plaqueBack: toonMat('#7a5536', { transparent: true, depthWrite: false }),
-      plaqueBackTop: toonMat('#7a5536', { depthTest: false }),
       borderDark: toonMat('#a24f78'),
       borderLight: toonMat('#f7d77e'),
     };
@@ -1183,7 +1160,7 @@ export class BoardView {
 
     // Gently drifting water surface (shared texture, tiny offset so baked cell grid stays aligned)
     const calm = !!(this._reduceMotion && this._reduceMotion.matches);
-    if (!calm) this._timeU.value = time;
+    if (!calm) { this._timeU.value = time; windU.value = time; }
     const wt = this._floorTex.get('water');
     if (wt && !calm) wt.offset.set(0.006 * Math.sin(time * 0.7), 0.006 * Math.cos(time * 0.55));
 
