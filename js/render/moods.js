@@ -85,7 +85,7 @@ export function moodEnvironment(renderer, name) {
     panel.position.set(...m.sunDir).normalize().multiplyScalar(8);
     s.add(panel);
     const pm = new THREE.PMREMGenerator(renderer);
-    c[name] = pm.fromScene(s, 0.06).texture;
+    c[name] = pm.fromScene(s, 0.04).texture;
     pm.dispose(); geo.dispose(); dome.material.dispose(); panel.geometry.dispose(); panel.material.dispose();
   }
   return c[name];

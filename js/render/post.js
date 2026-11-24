@@ -6,7 +6,7 @@ const VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(positi
 
 const AO_FRAG = `
 uniform sampler2D tDepth; uniform vec2 uRes; uniform mat4 uProj, uInvProj; uniform float uRadius, uFar; varying vec2 vUv;
-vec3 viewPos(vec2 uv){ float d = texture2D(tDepth, uv).x; vec4 p = uInvProj * vec4(vec3(uv, d) * 2.0 - 1.0, 1.0); return p.xyz / p.w; }
+vec3 viewPos(vec2 uv){ float d = textureLod(tDepth, uv, 0.0).x; vec4 p = uInvProj * vec4(vec3(uv, d) * 2.0 - 1.0, 1.0); return p.xyz / p.w; }
 float ign(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
 void main(){
   float d0 = texture2D(tDepth, vUv).x;
@@ -38,7 +38,7 @@ uniform sampler2D tAO; uniform vec2 uDir; uniform float uFar; varying vec2 vUv;
 void main(){
   vec4 c = texture2D(tAO, vUv); float s = c.r, w = 1.0;
   for (int i = -3; i <= 3; i++) { if (i == 0) continue;
-    vec4 q = texture2D(tAO, vUv + uDir * float(i));
+    vec4 q = textureLod(tAO, vUv + uDir * float(i), 0.0);
     float k = exp(-float(i * i) * 0.16) * max(0.0, 1.0 - abs(q.g - c.g) * uFar * 4.0);
     s += q.r * k; w += k; }
   gl_FragColor = vec4(s / w, c.g, 0.0, 1.0);
@@ -150,7 +150,8 @@ export class Post {
   _alloc(w, h) {
     this._free();
     const o = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false };
-    const k = this.level >= 3 ? 1 : Math.min(1, (this.level === 2 ? 1.25 : 1) / this.r.getPixelRatio());
+    const pr = this.r.getPixelRatio(); // shading cost is per pixel: the lower levels mainly render fewer of them
+    const k = this.level >= 3 ? 1 : Math.min(1, (this.level === 2 ? Math.min(1.25, pr * 0.85) : Math.min(1, pr * 0.72)) / pr);
     const W = Math.max(2, Math.round(w * k)), H = Math.max(2, Math.round(h * k));
     this.rt = new THREE.WebGLRenderTarget(W, H, { ...o, depthBuffer: true, samples: 4 });
     if (this.level >= 2) {

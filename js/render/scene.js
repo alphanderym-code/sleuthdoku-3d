@@ -876,6 +876,8 @@ export class BoardView {
   setMood(name, override = false) {
     const m = MOODS[name] ? name : 'day', M = MOODS[m];
     this.mood = m;
+    this._mat.auto.color.setScalar(m === 'night' ? 1.7 : 0.9); // faint automatic marks stay readable on dark floors
+    this._mat.auto.opacity = m === 'night' ? 0.5 : 0.42;
     if (override) this._moodOverride = m;
     const b = this._baseLight;
     this.hemi.color.set(M.hemi[0]); this.hemi.groundColor.set(M.hemi[1]); b.hemi = M.hemi[2];
@@ -940,7 +942,7 @@ export class BoardView {
     if (this._disposed) return;
     const w = Math.max(1, this.container.clientWidth | 0);
     const h = Math.max(1, this.container.clientHeight | 0);
-    const pr = Math.min(window.devicePixelRatio || 1, this.post.level === 0 ? 1 : 2);
+    const pr = Math.min(window.devicePixelRatio || 1, this.post.level === 0 ? 0.8 : 2);
     if (!force && w === this._w && h === this._h && pr === this._pr) return;
     this._pr = pr;
     if (this.renderer.getPixelRatio() !== pr) this.renderer.setPixelRatio(pr);
