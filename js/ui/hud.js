@@ -194,6 +194,12 @@ export class Hud {
     document.querySelectorAll('.mute-label').forEach(e => { e.textContent = m ? 'Muted' : (e.closest('.tool') ? 'Sound' : 'Sound on'); });
   }
 
+  setMood(m) {
+    const [ico, label] = { golden: ['&#127749;', 'Sunset'], night: ['&#127769;', 'Night'] }[m] || ['&#9728;&#65039;', 'Day'];
+    document.querySelectorAll('.mood-ico').forEach(e => { e.innerHTML = ico; });
+    document.querySelectorAll('.mood-label').forEach(e => { e.textContent = label; });
+  }
+
   showCanvasError(msg) {
     this.canvasEl.innerHTML = `<div class="webgl-error"><div>${esc(msg)}</div></div>`;
   }
