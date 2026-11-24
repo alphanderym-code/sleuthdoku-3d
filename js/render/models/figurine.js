@@ -388,7 +388,7 @@ function buildHeadAccessory(head, kind, { mHair, mDark, mat, mAcc, mGold, outfit
       for (const sx of [-1, 1]) {
         const rim = add(head, TOR(0.062, 0.0085, 6, 20), frame, { ...T });
         onHead(rim, sx * 0.088, 0.025, 0.014);
-        const lens = add(head, new THREE.CircleGeometry(0.058, 16), new THREE.MeshToonMaterial({ color: '#cfe8ff', transparent: true, opacity: 0.28 }), { ...T });
+        const lens = add(head, new THREE.CircleGeometry(0.058, 16), new THREE.MeshStandardMaterial({ color: '#cfe8ff', roughness: 0.15, transparent: true, opacity: 0.28 }), { ...T });
         onHead(lens, sx * 0.088, 0.025, 0.011);
         const tmp = add(head, CAPS(0.006, 0.12, 2, 5), frame, { ...T });
         tmp.position.set(sx * 0.2, 0.03, 0.07); tmp.rotation.set(Math.PI / 2, 0, 0); tmp.rotation.z = sx * 0.1;

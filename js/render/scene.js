@@ -1,28 +1,30 @@
 // BoardView — three.js renderer for Tiny Crimes (see SPEC.md "js/render/scene.js").
-// Toon diorama board with 3D tokens, gesture input (tap / hold / paint), limited orbit camera.
+// Soft toy-like diorama board with 3D tokens, gesture input (tap / hold / paint), limited orbit camera.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import {
+  makeCanvas, canvasTexture, prng, hashStr, toHex, FLOOR_BASE, floorTexture, frameWoodTexture, xMarkTexture, chipTexture,
+  blobShadowTexture, glowTileTexture, ringTexture,
+} from './textures.js';
+import { DEG, FRAME_W, FRAME_TOP, keyOf, noRaycast } from './layout.js';
+import { boardKit } from './boardkit.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { OBJECT_TYPES } from '../model/objects.js';
 import {
-  createObject, createFigurine, disposeObject, standInfo, gradientMap, addOutlines,
+  createObject, createFigurine, disposeObject, standInfo, softMat, setGlow,
 } from './models.js';
+import { MOODS, defaultMood, moodEnvironment } from './moods.js';
+import { Post } from './post.js';
+import { buildWorld } from './world.js';
 
 const HOLD_MS = 350;
 const TAP_MOVE_PX = 10;
-const DEG = Math.PI / 180;
 const DEFAULT_POLAR = 42 * DEG;   // angle from vertical (≈48° above the horizon)
 const DEFAULT_AZIMUTH = 0;
 const AZ_LIMIT = 35 * DEG;
 const POLAR_MIN = 12 * DEG;
 const POLAR_MAX = 64 * DEG;
 
-const FRAME_W = 0.34;      // outer frame width
-const FRAME_TOP = 0.22;    // frame top above the floor
-const WALL_T = 0.075;      // room wall thickness
-const WALL_H = 0.17;       // room wall height (incl. cap)
-const OUTDOOR = new Set(['grass', 'sand', 'snow']);
-const SUN_DIR = new THREE.Vector3(-0.48, 1, 0.62).normalize();
 
 // ---------------------------------------------------------------------------
 // Easing + tiny tween helper
@@ -68,586 +70,6 @@ class Tweens {
   clear() { this.list.forEach((t) => { t.dead = true; }); this.list = []; }
 }
 
-// ---------------------------------------------------------------------------
-// Canvas helpers
-// ---------------------------------------------------------------------------
-const FONT = '"Trebuchet MS", "Segoe UI", Arial, sans-serif';
-function makeCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
-function canvasTexture(canvas, owned = true) {
-  const t = new THREE.CanvasTexture(canvas);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
-  t.userData.owned = owned;
-  return t;
-}
-function prng(seed) { let s = seed >>> 0 || 1; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
-function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
-function roundRect(x, X, Y, W, H, R) {
-  R = Math.min(R, W / 2, H / 2);
-  x.beginPath();
-  x.moveTo(X + R, Y); x.lineTo(X + W - R, Y); x.quadraticCurveTo(X + W, Y, X + W, Y + R);
-  x.lineTo(X + W, Y + H - R); x.quadraticCurveTo(X + W, Y + H, X + W - R, Y + H);
-  x.lineTo(X + R, Y + H); x.quadraticCurveTo(X, Y + H, X, Y + H - R);
-  x.lineTo(X, Y + R); x.quadraticCurveTo(X, Y, X + R, Y); x.closePath();
-}
-function hexToHsl(hex) {
-  const n = parseInt(String(hex).replace('#', '').slice(0, 6), 16) || 0;
-  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
-  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-  let h = 0, s = 0; const l = (mx + mn) / 2;
-  if (mx !== mn) {
-    const d = mx - mn;
-    s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
-    h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
-    h /= 6;
-  }
-  return [h * 360, s * 100, l * 100];
-}
-const clamp100 = (v) => Math.max(0, Math.min(100, v));
-/** CSS colour = hex shifted in HSL (dl/ds in %, dh in degrees). */
-function hsl(hex, dl = 0, ds = 0, dh = 0, a = 1) {
-  const [h, s, l] = hexToHsl(hex);
-  return `hsla(${(h + dh).toFixed(1)},${clamp100(s + ds).toFixed(1)}%,${clamp100(l + dl).toFixed(1)}%,${a})`;
-}
-/** Any CSS colour → #rrggbb (via THREE.Color, sRGB). */
-function toHex(col) { try { return '#' + new THREE.Color(col).getHexString(); } catch (_) { return '#888888'; } }
-/** Draw fn at the 9 wrap offsets so shapes crossing the edge tile seamlessly. */
-function wrap9(S, fn) { for (const dx of [-S, 0, S]) for (const dy of [-S, 0, S]) fn(dx, dy); }
-
-const FLOOR_BASE = {
-  wood: '#e9c393', tile: '#dcf0f3', grass: '#b9e297', sand: '#f6e2b0',
-  stone: '#d9d4ce', carpet: '#e9b6cc', snow: '#f2f6ff', checker: '#f6f0e4',
-  water: '#8fd8e6', brick: '#c9b8d6', dirt: '#d6b48a',
-  fairway: '#a4de7c', green: '#b9ee92', // golf (Extreme scenes)
-};
-
-/** Floor pattern texture covering 2×2 cells (UV unit = 2 cells). Cell borders are baked in as a soft grid. */
-function floorTexture(type) {
-  const S = 512, C = S / 2;
-  const cv = makeCanvas(S, S);
-  const x = cv.getContext('2d');
-  const r = prng(hashStr(type) + 7);
-  const base = FLOOR_BASE[type] || '#eeeeee';
-  x.fillStyle = base; x.fillRect(0, 0, S, S);
-  switch (type) {
-    case 'wood': {
-      const rows = 8, ph = S / rows;
-      for (let i = 0; i < rows; i++) {
-        const y0 = i * ph;
-        let px = r() * S; const end = px + S;
-        while (px < end - 1) {
-          let len = C * (0.8 + r() * 0.9);
-          if (end - px - len < C * 0.4) len = end - px;
-          const seed = (r() * 1e9) | 0;
-          const col = hsl(base, (r() - 0.5) * 9, (r() - 0.5) * 10, (r() - 0.5) * 6);
-          const X0 = px;
-          wrap9(S, (dx, dy) => {
-            if (dy !== 0) return;
-            const q = prng(seed);
-            const X = X0 + dx;
-            x.save();
-            x.beginPath(); x.rect(X, y0, len, ph); x.clip();
-            x.fillStyle = col; x.fillRect(X, y0, len, ph);
-            const g = x.createLinearGradient(0, y0, 0, y0 + ph);
-            g.addColorStop(0, 'rgba(255,245,225,0.25)'); g.addColorStop(1, 'rgba(120,70,30,0.12)');
-            x.fillStyle = g; x.fillRect(X, y0, len, ph);
-            const n = 4 + ((q() * 3) | 0);
-            for (let k = 0; k < n; k++) {
-              const yy = y0 + ph * (0.12 + 0.76 * q());
-              x.strokeStyle = hsl(base, -22 - q() * 10, 5, -3, 0.16 + q() * 0.14);
-              x.lineWidth = 0.8 + q() * 1.6;
-              x.beginPath(); x.moveTo(X - 4, yy);
-              const a = (q() - 0.5) * 8;
-              x.bezierCurveTo(X + len * 0.33, yy + a, X + len * 0.66, yy - a, X + len + 4, yy + (q() - 0.5) * 4);
-              x.stroke();
-            }
-            if (q() < 0.4) {
-              const kx = X + len * (0.2 + 0.6 * q()), ky = y0 + ph * (0.35 + 0.3 * q());
-              const rx = 7 + q() * 7, ry = 3.5 + q() * 2.5;
-              x.fillStyle = hsl(base, -28, 8, -4, 0.45);
-              x.beginPath(); x.ellipse(kx, ky, rx * 0.55, ry * 0.6, 0, 0, Math.PI * 2); x.fill();
-              x.strokeStyle = hsl(base, -24, 6, -4, 0.3); x.lineWidth = 1.2;
-              for (let k = 1; k <= 2; k++) { x.beginPath(); x.ellipse(kx, ky, rx * (0.6 + k * 0.45), ry * (0.65 + k * 0.5), 0, 0, Math.PI * 2); x.stroke(); }
-            }
-            x.restore();
-            x.fillStyle = 'rgba(105,60,28,0.5)'; x.fillRect(X, y0, len, 2.5);
-            x.fillStyle = 'rgba(255,242,220,0.45)'; x.fillRect(X, y0 + 2.5, len, 1.5);
-            x.fillStyle = 'rgba(105,60,28,0.5)'; x.fillRect(X, y0, 2.5, ph);
-            x.fillStyle = 'rgba(255,242,220,0.35)'; x.fillRect(X + 2.5, y0 + 2.5, 1.5, ph - 2.5);
-            x.fillStyle = 'rgba(90,55,30,0.45)';
-            for (const nx of [X + 9, X + len - 9]) {
-              x.beginPath(); x.arc(nx, y0 + ph * 0.3, 1.8, 0, 7); x.fill();
-              x.beginPath(); x.arc(nx, y0 + ph * 0.72, 1.8, 0, 7); x.fill();
-            }
-          });
-          px += len;
-        }
-      }
-      break;
-    }
-    case 'tile': {
-      const n = 4, ts = S / n, gw = 6;
-      x.fillStyle = hsl(base, -16, -18); x.fillRect(0, 0, S, S); // grout
-      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
-        const X = i * ts + gw / 2, Y = j * ts + gw / 2, W = ts - gw;
-        const g = x.createLinearGradient(X, Y, X + W, Y + W);
-        const dl = (r() - 0.5) * 6, dh = (r() - 0.5) * 10;
-        g.addColorStop(0, hsl(base, 6 + dl, 0, dh)); g.addColorStop(1, hsl(base, -3 + dl, 0, dh));
-        x.fillStyle = g; roundRect(x, X, Y, W, W, 9); x.fill();
-        x.fillStyle = 'rgba(255,255,255,0.55)';
-        roundRect(x, X + 10, Y + 9, W * 0.32, 6, 3); x.fill();
-        roundRect(x, X + 10, Y + 19, 6, 6, 3); x.fill();
-        x.strokeStyle = 'rgba(60,110,130,0.14)'; x.lineWidth = 2;
-        roundRect(x, X + 1, Y + 1, W - 2, W - 2, 8); x.stroke();
-      }
-      break;
-    }
-    case 'grass': {
-      for (let i = 0; i < 26; i++) {
-        const cx = r() * S, cy = r() * S, rad = 30 + r() * 70, light = r() < 0.5;
-        wrap9(S, (dx, dy) => {
-          const g = x.createRadialGradient(cx + dx, cy + dy, 0, cx + dx, cy + dy, rad);
-          g.addColorStop(0, light ? 'rgba(230,255,190,0.35)' : 'rgba(90,160,70,0.22)');
-          g.addColorStop(1, 'rgba(0,0,0,0)');
-          x.fillStyle = g; x.fillRect(cx + dx - rad, cy + dy - rad, rad * 2, rad * 2);
-        });
-      }
-      x.lineCap = 'round';
-      for (let i = 0; i < 1700; i++) {
-        const bx = r() * S, by = r() * S, len = 5 + r() * 8, ang = -Math.PI / 2 + (r() - 0.5) * 0.9;
-        const k = r();
-        x.strokeStyle = k < 0.45 ? hsl(base, -20 - r() * 12, 5, 4, 0.55) : k < 0.85 ? hsl(base, 10 + r() * 8, 5, -6, 0.6) : hsl(base, -4, 15, 10, 0.6);
-        x.lineWidth = 1.6 + r() * 1.2;
-        x.beginPath(); x.moveTo(bx, by); x.lineTo(bx + Math.cos(ang) * len, by + Math.sin(ang) * len); x.stroke();
-      }
-      for (let i = 0; i < 40; i++) {
-        x.fillStyle = r() < 0.5 ? 'rgba(255,250,200,0.8)' : 'rgba(255,255,255,0.75)';
-        x.beginPath(); x.arc(r() * S, r() * S, 1.6 + r() * 1.4, 0, 7); x.fill();
-      }
-      break;
-    }
-    case 'sand': {
-      for (let k = 0; k < 12; k++) {
-        const y0 = (k + 0.5) * (S / 12) + (r() - 0.5) * 10, amp = 5 + r() * 5, ph = r() * Math.PI * 2;
-        const line = (dy, col, w) => {
-          x.strokeStyle = col; x.lineWidth = w; x.beginPath();
-          for (let px = 0; px <= S; px += 8) {
-            const yy = y0 + dy + Math.sin((px / S) * Math.PI * 6 + ph) * amp + Math.sin((px / S) * Math.PI * 2 + ph * 2) * amp * 0.6;
-            if (px === 0) x.moveTo(px, yy); else x.lineTo(px, yy);
-          }
-          x.stroke();
-        };
-        line(0, 'rgba(255,250,232,0.65)', 3);
-        line(4, hsl(base, -16, 5, -4, 0.35), 2.5);
-      }
-      for (let i = 0; i < 1600; i++) {
-        x.fillStyle = r() < 0.55 ? hsl(base, -22 - r() * 10, 0, -6, 0.4) : 'rgba(255,255,245,0.7)';
-        x.fillRect(r() * S, r() * S, 1.5 + r() * 1.5, 1.5 + r() * 1.5);
-      }
-      for (let i = 0; i < 5; i++) {
-        const sx = 30 + r() * (S - 60), sy = 30 + r() * (S - 60), sr = 9 + r() * 6, rot = r() * Math.PI * 2;
-        x.save(); x.translate(sx, sy); x.rotate(rot);
-        x.fillStyle = r() < 0.5 ? '#fde0e3' : '#fff4e6';
-        x.strokeStyle = 'rgba(150,100,90,0.6)'; x.lineWidth = 1.5;
-        x.beginPath(); x.moveTo(0, sr * 0.4); x.arc(0, sr * 0.4, sr, Math.PI * 1.1, Math.PI * 1.9); x.closePath(); x.fill(); x.stroke();
-        for (let k = 1; k < 5; k++) {
-          const a = Math.PI * (1.1 + 0.8 * k / 5);
-          x.beginPath(); x.moveTo(0, sr * 0.4); x.lineTo(Math.cos(a) * sr, sr * 0.4 + Math.sin(a) * sr); x.stroke();
-        }
-        x.restore();
-      }
-      {
-        const sx = 80 + r() * 350, sy = 80 + r() * 350, R1 = 12, R2 = 5;
-        x.fillStyle = '#f5a46b'; x.strokeStyle = 'rgba(140,70,40,0.7)'; x.lineWidth = 1.5;
-        x.beginPath();
-        for (let k = 0; k < 10; k++) { const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? R2 : R1; x.lineTo(sx + Math.cos(a) * rr, sy + Math.sin(a) * rr); }
-        x.closePath(); x.fill(); x.stroke();
-      }
-      break;
-    }
-    case 'stone': {
-      x.fillStyle = hsl(base, -22, -6); x.fillRect(0, 0, S, S);
-      const rows = 4, rh = S / rows;
-      for (let i = 0; i < rows; i++) {
-        let px = r() * S; const end = px + S;
-        while (px < end - 1) {
-          let w = rh * (0.8 + r() * 0.7);
-          if (end - px - w < rh * 0.5) w = end - px;
-          const seed = (r() * 1e9) | 0;
-          const dl = (r() - 0.5) * 10, dh = (r() - 0.5) * 16;
-          const X0 = px, Y0 = i * rh;
-          wrap9(S, (dx, dy) => {
-            if (dy !== 0) return;
-            const q = prng(seed);
-            const X = X0 + dx + 4, Y = Y0 + 4, W = w - 8, H = rh - 8;
-            const j = () => (q() - 0.5) * 10;
-            const pts = [[X + j() + 6, Y + j() + 4], [X + W + j() - 6, Y + j() + 4], [X + W + j() - 3, Y + H + j() - 6], [X + j() + 3, Y + H + j() - 4]];
-            const path = () => {
-              x.beginPath();
-              const m = (k) => { const a = pts[k % 4], b = pts[(k + 1) % 4]; return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; };
-              const s0 = m(0); x.moveTo(s0[0], s0[1]);
-              for (let k = 1; k <= 4; k++) { const a = pts[k % 4], mm = m(k); x.quadraticCurveTo(a[0], a[1], mm[0], mm[1]); }
-              x.closePath();
-            };
-            x.save();
-            path();
-            const g = x.createLinearGradient(X, Y, X + W * 0.4, Y + H);
-            g.addColorStop(0, hsl(base, 7 + dl, 0, dh)); g.addColorStop(1, hsl(base, -4 + dl, 0, dh));
-            x.fillStyle = g; x.fill();
-            x.clip();
-            for (let k = 0; k < 60; k++) {
-              x.fillStyle = q() < 0.5 ? 'rgba(90,80,75,0.18)' : 'rgba(255,255,255,0.3)';
-              x.fillRect(X + q() * W, Y + q() * H, 2, 2);
-            }
-            if (q() < 0.35) {
-              x.strokeStyle = 'rgba(80,70,65,0.35)'; x.lineWidth = 1.3;
-              x.beginPath(); let cx = X + W * (0.2 + q() * 0.6), cy = Y + 4; x.moveTo(cx, cy);
-              for (let k = 0; k < 4; k++) { cx += (q() - 0.5) * 18; cy += H / 5; x.lineTo(cx, cy); }
-              x.stroke();
-            }
-            x.restore();
-            path();
-            x.strokeStyle = 'rgba(255,255,255,0.35)'; x.lineWidth = 2; x.stroke();
-          });
-          px += w;
-        }
-      }
-      break;
-    }
-    case 'carpet': {
-      for (let i = 0; i < S; i += 4) {
-        x.fillStyle = 'rgba(255,255,255,0.07)'; x.fillRect(0, i, S, 2);
-        x.fillStyle = 'rgba(120,40,80,0.06)'; x.fillRect(i, 0, 2, S);
-      }
-      for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
-        const cx = i * C + C / 2, cy = j * C + C / 2, R = C * 0.33;
-        x.fillStyle = hsl(base, 6, 4); x.strokeStyle = hsl(base, -18, 6, -6, 0.7); x.lineWidth = 4;
-        x.beginPath(); x.moveTo(cx, cy - R); x.lineTo(cx + R, cy); x.lineTo(cx, cy + R); x.lineTo(cx - R, cy); x.closePath(); x.fill(); x.stroke();
-        x.fillStyle = hsl(base, -14, 10, -8, 0.85);
-        const r2 = R * 0.42;
-        x.beginPath(); x.moveTo(cx, cy - r2); x.lineTo(cx + r2, cy); x.lineTo(cx, cy + r2); x.lineTo(cx - r2, cy); x.closePath(); x.fill();
-        x.fillStyle = '#fff3d6';
-        x.beginPath(); x.arc(cx, cy, 5, 0, 7); x.fill();
-      }
-      for (const [ox, oy] of [[0, 0], [C, 0], [0, C], [C, C], [S, 0], [0, S], [S, S], [S, C], [C, S]]) {
-        x.fillStyle = hsl(base, -10, 6, -4, 0.7);
-        x.beginPath(); x.arc(ox, oy, 10, 0, 7); x.fill();
-      }
-      for (let i = 0; i < 900; i++) {
-        x.fillStyle = r() < 0.5 ? 'rgba(255,255,255,0.12)' : 'rgba(110,30,70,0.08)';
-        x.fillRect(r() * S, r() * S, 2, 2);
-      }
-      break;
-    }
-    case 'snow': {
-      for (let i = 0; i < 22; i++) {
-        const cx = r() * S, cy = r() * S, rad = 40 + r() * 80, strong = r() < 0.5;
-        wrap9(S, (dx, dy) => {
-          const g = x.createRadialGradient(cx + dx, cy + dy - rad * 0.2, 0, cx + dx, cy + dy, rad);
-          g.addColorStop(0, strong ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.5)');
-          g.addColorStop(0.7, strong ? 'rgba(170,195,240,0.18)' : 'rgba(255,255,255,0)');
-          g.addColorStop(1, 'rgba(170,195,240,0)');
-          x.fillStyle = g; x.fillRect(cx + dx - rad, cy + dy - rad, rad * 2, rad * 2);
-        });
-      }
-      for (let i = 0; i < 500; i++) {
-        x.fillStyle = r() < 0.6 ? 'rgba(150,180,230,0.3)' : 'rgba(255,255,255,0.9)';
-        x.beginPath(); x.arc(r() * S, r() * S, 0.8 + r() * 1.6, 0, 7); x.fill();
-      }
-      for (let i = 0; i < 46; i++) {
-        const sx = r() * S, sy = r() * S, L = 4 + r() * 6;
-        const g = x.createRadialGradient(sx, sy, 0, sx, sy, L * 1.2);
-        g.addColorStop(0, 'rgba(255,255,255,0.95)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-        x.fillStyle = g; x.fillRect(sx - L * 1.2, sy - L * 1.2, L * 2.4, L * 2.4);
-        x.strokeStyle = 'rgba(255,255,255,0.95)'; x.lineWidth = 1.4;
-        x.beginPath(); x.moveTo(sx - L, sy); x.lineTo(sx + L, sy); x.moveTo(sx, sy - L); x.lineTo(sx, sy + L); x.stroke();
-        x.strokeStyle = 'rgba(170,200,250,0.9)'; x.lineWidth = 1;
-        x.beginPath(); x.moveTo(sx - L * 0.4, sy - L * 0.4); x.lineTo(sx + L * 0.4, sy + L * 0.4); x.moveTo(sx + L * 0.4, sy - L * 0.4); x.lineTo(sx - L * 0.4, sy + L * 0.4); x.stroke();
-      }
-      break;
-    }
-    case 'checker': {
-      const n = 4, ts = S / n;
-      const dark = '#c9bfe6';
-      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
-        const col = (i + j) % 2 === 1 ? dark : base;
-        const dl = (r() - 0.5) * 4;
-        const X = i * ts, Y = j * ts;
-        const g = x.createLinearGradient(X, Y, X + ts, Y + ts);
-        g.addColorStop(0, hsl(col, 4 + dl)); g.addColorStop(1, hsl(col, -3 + dl));
-        x.fillStyle = g; x.fillRect(X, Y, ts, ts);
-        x.fillStyle = 'rgba(255,255,255,0.4)'; x.fillRect(X + 2, Y + 2, ts - 4, 2.5); x.fillRect(X + 2, Y + 2, 2.5, ts - 4);
-        x.fillStyle = 'rgba(70,55,110,0.16)'; x.fillRect(X + 2, Y + ts - 4, ts - 4, 2.5); x.fillRect(X + ts - 4, Y + 2, 2.5, ts - 4);
-        if (r() < 0.25) { x.strokeStyle = 'rgba(255,255,255,0.45)'; x.lineWidth = 3; x.beginPath(); x.moveTo(X + ts * 0.62, Y + ts * 0.16); x.lineTo(X + ts * 0.84, Y + ts * 0.38); x.stroke(); }
-      }
-      break;
-    }
-    case 'water': {
-      const g = x.createLinearGradient(0, 0, S, S);
-      g.addColorStop(0, hsl(base, 3)); g.addColorStop(0.5, hsl(base, -4, 0, 4)); g.addColorStop(1, hsl(base, 3));
-      x.fillStyle = g; x.fillRect(0, 0, S, S);
-      for (let i = 0; i < 22; i++) { // soft darker blobs
-        const px = r() * S, py = r() * S, rad = 30 + r() * 40;
-        x.fillStyle = hsl(base, -7, 4, 6, 0.18);
-        wrap9(S, (dx, dy) => { x.beginPath(); x.ellipse(px + dx, py + dy, rad, rad * 0.5, 0, 0, 7); x.fill(); });
-      }
-      for (let i = 0; i < 16; i++) { // wave squiggles
-        const px = r() * S, py = r() * S, len = 50 + r() * 50, a = 4 + r() * 4;
-        const hi = r() < 0.6;
-        x.strokeStyle = hi ? 'rgba(255,255,255,0.55)' : hsl(base, -14, 8, 4, 0.4);
-        x.lineWidth = hi ? 3 : 2.5; x.lineCap = 'round';
-        wrap9(S, (dx, dy) => {
-          x.beginPath(); x.moveTo(px + dx, py + dy);
-          x.bezierCurveTo(px + dx + len * 0.25, py + dy - a, px + dx + len * 0.4, py + dy + a, px + dx + len * 0.5, py + dy);
-          x.bezierCurveTo(px + dx + len * 0.6, py + dy - a, px + dx + len * 0.8, py + dy + a, px + dx + len, py + dy);
-          x.stroke();
-        });
-      }
-      for (let i = 0; i < 12; i++) { // sparkles
-        const px = r() * S, py = r() * S, L = 3 + r() * 3;
-        x.strokeStyle = 'rgba(255,255,255,0.8)'; x.lineWidth = 1.3;
-        wrap9(S, (dx, dy) => { x.beginPath(); x.moveTo(px + dx - L, py + dy); x.lineTo(px + dx + L, py + dy); x.moveTo(px + dx, py + dy - L); x.lineTo(px + dx, py + dy + L); x.stroke(); });
-      }
-      break;
-    }
-    case 'brick': {
-      const rows = 8, bh = S / rows, bw = S / 4;
-      x.fillStyle = '#8a82a0'; x.fillRect(0, 0, S, S); // mortar
-      for (let j = 0; j < rows; j++) {
-        const off = (j % 2) * (bw / 2);
-        for (let i = -1; i < 5; i++) {
-          const X = i * bw + off, Y = j * bh;
-          const col = hsl(base, (r() - 0.5) * 9, (r() - 0.5) * 6, (r() - 0.5) * 6);
-          x.fillStyle = col; x.fillRect(X + 3, Y + 3, bw - 6, bh - 6);
-          x.fillStyle = 'rgba(255,255,255,0.3)'; x.fillRect(X + 3, Y + 3, bw - 6, 2.5);
-          x.fillStyle = 'rgba(50,40,80,0.18)'; x.fillRect(X + 3, Y + bh - 6, bw - 6, 3);
-          if (r() < 0.3) { x.fillStyle = 'rgba(50,40,80,0.1)'; x.fillRect(X + 3 + r() * bw * 0.5, Y + 8, 8 + r() * 14, bh - 16); }
-        }
-      }
-      break;
-    }
-    case 'dirt': {
-      for (let i = 0; i < 30; i++) {
-        const px = r() * S, py = r() * S, rad = 22 + r() * 40;
-        x.fillStyle = hsl(base, (r() - 0.5) * 14, (r() - 0.5) * 8, 0, 0.35);
-        wrap9(S, (dx, dy) => { x.beginPath(); x.ellipse(px + dx, py + dy, rad, rad * (0.5 + r() * 0.3), r() * 3, 0, 7); x.fill(); });
-      }
-      for (let i = 0; i < 60; i++) { // pebbles
-        const px = r() * S, py = r() * S, rr = 1.5 + r() * 3;
-        x.fillStyle = hsl(base, r() < 0.5 ? -18 : 8, -4, 0, 0.7);
-        wrap9(S, (dx, dy) => { x.beginPath(); x.ellipse(px + dx, py + dy, rr * 1.3, rr, 0, 0, 7); x.fill(); });
-      }
-      for (let i = 0; i < 8; i++) { // furrow lines
-        const py = r() * S, px = r() * S, len = 60 + r() * 80;
-        x.strokeStyle = hsl(base, -16, 0, 0, 0.3); x.lineWidth = 2.5; x.lineCap = 'round';
-        wrap9(S, (dx, dy) => { x.beginPath(); x.moveTo(px + dx, py + dy); x.quadraticCurveTo(px + dx + len / 2, py + dy + 5, px + dx + len, py + dy); x.stroke(); });
-      }
-      break;
-    }
-    case 'fairway':
-    case 'green': { // mown golf turf: alternating light/dark stripes (green: finer + smoother)
-      const stripes = type === 'green' ? 16 : 8, sw = S / stripes;
-      for (let i = 0; i < stripes; i++) {
-        x.fillStyle = i % 2 ? 'rgba(255,255,220,0.22)' : 'rgba(70,150,70,0.14)';
-        x.fillRect(i * sw, 0, sw, S);
-      }
-      for (let i = 0; i < (type === 'green' ? 150 : 700); i++) {
-        const bx = r() * S, by = r() * S, len = 3 + r() * 4;
-        x.strokeStyle = r() < 0.5 ? 'rgba(60,140,60,0.35)' : 'rgba(235,255,200,0.4)';
-        x.lineWidth = 1.2;
-        x.beginPath(); x.moveTo(bx, by); x.lineTo(bx + (r() - 0.5) * 2, by - len); x.stroke();
-      }
-      break;
-    }
-    default: break;
-  }
-  // Soft baked cell grid (cell borders at 0, C and S).
-  for (const p of [0, C, S]) {
-    x.fillStyle = 'rgba(43,43,58,0.15)';
-    x.fillRect(p - 1.5, 0, 3, S); x.fillRect(0, p - 1.5, S, 3);
-    x.fillStyle = 'rgba(43,43,58,0.05)';
-    x.fillRect(p - 4, 0, 8, S); x.fillRect(0, p - 4, S, 8);
-  }
-  const t = canvasTexture(cv, false);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  return t;
-}
-
-/** Wood texture for the outer frame. */
-function frameWoodTexture() {
-  const S = 512, cv = makeCanvas(S, S), x = cv.getContext('2d');
-  const r = prng(4242);
-  x.fillStyle = '#c08856'; x.fillRect(0, 0, S, S);
-  for (let i = 0; i < 90; i++) {
-    const y = r() * S;
-    x.strokeStyle = r() < 0.6 ? 'rgba(90,50,25,0.2)' : 'rgba(255,225,180,0.2)';
-    x.lineWidth = 1 + r() * 2.5;
-    x.beginPath(); x.moveTo(0, y);
-    const a = (r() - 0.5) * 14;
-    x.bezierCurveTo(S * 0.3, y + a, S * 0.7, y - a, S, y);
-    x.stroke();
-  }
-  for (let i = 0; i < 5; i++) {
-    const kx = r() * S, ky = r() * S;
-    x.fillStyle = 'rgba(80,45,20,0.3)';
-    x.beginPath(); x.ellipse(kx, ky, 10, 5, 0, 0, 7); x.fill();
-    x.strokeStyle = 'rgba(80,45,20,0.22)'; x.lineWidth = 1.5;
-    x.beginPath(); x.ellipse(kx, ky, 18, 9, 0, 0, 7); x.stroke();
-  }
-  const t = canvasTexture(cv, false);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  return t;
-}
-
-/** Chunky painted / chalky X mark. */
-function xMarkTexture(color, outline, seed) {
-  const S = 256, cv = makeCanvas(S, S), x = cv.getContext('2d');
-  const r = prng(seed);
-  x.lineCap = 'round'; x.lineJoin = 'round';
-  const strokes = [[62, 56, 196, 198, -10], [198, 60, 58, 196, 10]];
-  const path = ([ax, ay, bx, by, bend]) => {
-    x.beginPath(); x.moveTo(ax, ay);
-    x.quadraticCurveTo((ax + bx) / 2 + bend, (ay + by) / 2 - bend, bx, by);
-  };
-  if (outline) {
-    x.save();
-    x.shadowColor = 'rgba(40,10,20,0.35)'; x.shadowBlur = 8; x.shadowOffsetY = 6;
-    x.strokeStyle = outline; x.lineWidth = 54;
-    for (const s of strokes) { path(s); x.stroke(); }
-    x.restore();
-  }
-  x.strokeStyle = color; x.lineWidth = 40;
-  for (const s of strokes) { path(s); x.stroke(); }
-  // brush bristles
-  for (const [ax, ay, bx, by, bend] of strokes) {
-    const nx = -(by - ay), ny = bx - ax, nl = Math.hypot(nx, ny);
-    for (let k = 0; k < 24; k++) {
-      x.strokeStyle = r() < 0.5 ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.12)';
-      x.lineWidth = 1.5 + r() * 2.5;
-      const off = (r() - 0.5) * 30;
-      const ox = (nx / nl) * off, oy = (ny / nl) * off;
-      const t0 = 0.05 + r() * 0.15, t1 = 0.8 + r() * 0.15;
-      x.beginPath();
-      x.moveTo(ax + (bx - ax) * t0 + ox, ay + (by - ay) * t0 + oy);
-      x.quadraticCurveTo((ax + bx) / 2 + bend + ox, (ay + by) / 2 - bend + oy, ax + (bx - ax) * t1 + ox, ay + (by - ay) * t1 + oy);
-      x.stroke();
-    }
-  }
-  x.strokeStyle = 'rgba(255,255,255,0.45)'; x.lineWidth = 6;
-  x.beginPath(); x.moveTo(74, 64); x.lineTo(104, 96); x.stroke();
-  // chalky grain (erase small specks)
-  x.globalCompositeOperation = 'destination-out';
-  for (let i = 0; i < 900; i++) {
-    x.fillStyle = `rgba(0,0,0,${0.15 + r() * 0.5})`;
-    x.fillRect(30 + r() * 196, 30 + r() * 196, 1.5 + r() * 2.5, 1.5 + r() * 2.5);
-  }
-  x.globalCompositeOperation = 'source-over';
-  return canvasTexture(cv, false);
-}
-
-/** Rounded badge note chip in the character's outfit colour. */
-function chipTexture(letter, color) {
-  const S = 128, cv = makeCanvas(S, S), x = cv.getContext('2d');
-  const hex = toHex(color);
-  x.save();
-  x.shadowColor = 'rgba(30,20,50,0.5)'; x.shadowBlur = 9; x.shadowOffsetY = 7;
-  x.fillStyle = '#2b2b3a'; roundRect(x, 10, 8, S - 20, S - 24, 30); x.fill();
-  x.restore();
-  const g = x.createLinearGradient(0, 14, 0, S - 22);
-  g.addColorStop(0, hsl(hex, 12)); g.addColorStop(1, hsl(hex, -6));
-  x.fillStyle = g; roundRect(x, 17, 15, S - 34, S - 38, 24); x.fill();
-  x.fillStyle = 'rgba(255,255,255,0.38)'; roundRect(x, 28, 21, S - 56, 12, 6); x.fill();
-  x.font = `bold 62px ${FONT}`;
-  x.textAlign = 'center'; x.textBaseline = 'middle';
-  x.lineWidth = 10; x.lineJoin = 'round'; x.strokeStyle = '#2b2b3a'; x.strokeText(letter, S / 2, S / 2);
-  x.fillStyle = '#ffffff'; x.fillText(letter, S / 2, S / 2);
-  return canvasTexture(cv);
-}
-
-function backgroundTexture() {
-  const S = 512, cv = makeCanvas(S, S), x = cv.getContext('2d');
-  const g = x.createLinearGradient(0, 0, 0, S);
-  g.addColorStop(0, '#ffe8d4'); g.addColorStop(0.5, '#f6e0ef'); g.addColorStop(1, '#d5d9f6');
-  x.fillStyle = g; x.fillRect(0, 0, S, S);
-  const r = prng(99);
-  for (let i = 0; i < 9; i++) {
-    const cx = r() * S, cy = r() * S * 0.6, rad = 40 + r() * 90;
-    const bg = x.createRadialGradient(cx, cy, 0, cx, cy, rad);
-    bg.addColorStop(0, 'rgba(255,255,255,0.16)'); bg.addColorStop(1, 'rgba(255,255,255,0)');
-    x.fillStyle = bg; x.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
-  }
-  const v = x.createRadialGradient(S / 2, S * 0.45, S * 0.3, S / 2, S * 0.5, S * 0.78);
-  v.addColorStop(0, 'rgba(90,70,140,0)'); v.addColorStop(1, 'rgba(90,70,140,0.16)');
-  x.fillStyle = v; x.fillRect(0, 0, S, S);
-  return canvasTexture(cv, false);
-}
-
-function blobShadowTexture() {
-  const S = 128, cv = makeCanvas(S, S), x = cv.getContext('2d');
-  const g = x.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
-  g.addColorStop(0, 'rgba(45,30,70,0.5)'); g.addColorStop(0.45, 'rgba(45,30,70,0.3)');
-  g.addColorStop(0.8, 'rgba(45,30,70,0.07)'); g.addColorStop(1, 'rgba(45,30,70,0)');
-  x.fillStyle = g; x.fillRect(0, 0, S, S);
-  return canvasTexture(cv, false);
-}
-
-/** White glowing rounded-tile outline (tinted by material colour). */
-function glowTileTexture() {
-  const S = 256, cv = makeCanvas(S, S), x = cv.getContext('2d');
-  x.fillStyle = 'rgba(255,255,255,0.2)'; roundRect(x, 22, 22, S - 44, S - 44, 34); x.fill();
-  x.save();
-  x.shadowColor = 'rgba(255,255,255,1)'; x.shadowBlur = 16;
-  x.strokeStyle = 'rgba(255,255,255,0.95)'; x.lineWidth = 9;
-  roundRect(x, 22, 22, S - 44, S - 44, 34); x.stroke();
-  x.restore();
-  x.strokeStyle = '#ffffff'; x.lineWidth = 5; roundRect(x, 22, 22, S - 44, S - 44, 34); x.stroke();
-  return canvasTexture(cv, false);
-}
-
-/** Glowing selection ring. */
-function ringTexture() {
-  const S = 256, cv = makeCanvas(S, S), x = cv.getContext('2d');
-  const c = S / 2, R = 96;
-  x.save();
-  x.shadowColor = 'rgba(255,220,80,1)'; x.shadowBlur = 18;
-  x.strokeStyle = '#2b2b3a'; x.lineWidth = 22;
-  x.beginPath(); x.arc(c, c, R, 0, 7); x.stroke();
-  x.restore();
-  x.strokeStyle = '#ffd84d'; x.lineWidth = 13;
-  x.beginPath(); x.arc(c, c, R, 0, 7); x.stroke();
-  x.strokeStyle = 'rgba(255,255,255,0.8)'; x.lineWidth = 3;
-  x.setLineDash([22, 18]);
-  x.beginPath(); x.arc(c, c, R - 2, 0, 7); x.stroke();
-  return canvasTexture(cv, false);
-}
-
-// Room plaques: one uniform world size for every label.
-// world height of a plaque = 0.2 + 0.018·N (lettering scales with the board, identical for every room)
-const PLAQUE_PX = 96;
-const PLAQUE_FONT = `bold 50px ${FONT}`;
-function measurePlaque(text) {
-  const cv = makeCanvas(8, 8), x = cv.getContext('2d');
-  x.font = PLAQUE_FONT;
-  return (x.measureText(text).width + 48) / PLAQUE_PX; // aspect w/h
-}
-function plaqueTexture(text, aspect) {
-  const H = PLAQUE_PX, W = Math.max(H, Math.round(H * aspect));
-  const cv = makeCanvas(W, H), x = cv.getContext('2d');
-  x.fillStyle = '#2b2b3a'; roundRect(x, 0, 0, W, H, 22); x.fill();
-  const g = x.createLinearGradient(0, 6, 0, H - 6);
-  g.addColorStop(0, '#fffaf0'); g.addColorStop(1, '#f1e1c2');
-  x.fillStyle = g; roundRect(x, 6, 6, W - 12, H - 12, 17); x.fill();
-  x.strokeStyle = 'rgba(160,120,80,0.45)'; x.lineWidth = 2;
-  roundRect(x, 12, 12, W - 24, H - 24, 12); x.stroke();
-  x.fillStyle = '#b8946a';
-  for (const nx of [18, W - 18]) { x.beginPath(); x.arc(nx, H / 2, 3.5, 0, 7); x.fill(); }
-  x.font = PLAQUE_FONT;
-  x.fillStyle = '#2b2b3a'; x.textAlign = 'center'; x.textBaseline = 'middle';
-  x.fillText(text, W / 2, H / 2 + 3);
-  const t = canvasTexture(cv);
-  return t;
-}
-
 // Hold-progress ring shader
 const RING_VERT = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
 const RING_FRAG = `
@@ -665,7 +87,6 @@ void main(){
   gl_FragColor = vec4(col, ring * mix(0.45, 1.0, filled) * uOpacity);
 }`;
 
-const keyOf = (r, c) => `${r},${c}`;
 // Object `facing` -> rotation.y (model front = local +z; board row r = world +z, column c = world +x).
 const FACING_ROT = { s: 0, e: Math.PI / 2, n: Math.PI, w: -Math.PI / 2 };
 function parseCell(v) {
@@ -675,29 +96,6 @@ function parseCell(v) {
   if (typeof v === 'object' && Number.isFinite(+v.r) && Number.isFinite(+v.c)) return { r: +v.r, c: +v.c };
   return null;
 }
-const noRaycast = () => {};
-
-/** Rounded-rectangle THREE.Shape centred at the origin. */
-function roundedRectShape(hw, hh, rad) {
-  const s = new THREE.Shape();
-  s.moveTo(-hw + rad, -hh);
-  s.lineTo(hw - rad, -hh); s.quadraticCurveTo(hw, -hh, hw, -hh + rad);
-  s.lineTo(hw, hh - rad); s.quadraticCurveTo(hw, hh, hw - rad, hh);
-  s.lineTo(-hw + rad, hh); s.quadraticCurveTo(-hw, hh, -hw, hh - rad);
-  s.lineTo(-hw, -hh + rad); s.quadraticCurveTo(-hw, -hh, -hw + rad, -hh);
-  return s;
-}
-/** Extruded slab (shape in XZ) whose top face sits at y = top. */
-function extrudeSlab(shape, depth, top, bevel) {
-  const g = new THREE.ExtrudeGeometry(shape, {
-    depth, bevelEnabled: bevel > 0, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 2, curveSegments: 6,
-  });
-  g.rotateX(-Math.PI / 2);
-  g.translate(0, top - depth - bevel, 0);
-  return g;
-}
-/** Box geometry placed at (x, y, z), non-indexed-compatible for merging. */
-function boxAt(w, h, d, x, y, z) { return new THREE.BoxGeometry(w, h, d).translate(x, y, z); }
 
 // ---------------------------------------------------------------------------
 // BoardView
@@ -723,7 +121,7 @@ export class BoardView {
     this._t0 = performance.now();
 
     // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' }); // antialias only matters for the no-post fallback
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -746,31 +144,37 @@ export class BoardView {
 
     // Scene
     const scene = new THREE.Scene();
-    this._bgTex = backgroundTexture();
-    scene.background = this._bgTex;
+    scene.background = new THREE.Color('#cfeaf0');
+    scene.fog = new THREE.Fog('#cfeaf0', 50, 100);
     this.scene = scene;
+    this.post = new Post(renderer);
+    const gfx = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('gfx') : null;
+    if (gfx != null && gfx !== '') this.post.lock(+gfx);
 
     this.camera = new THREE.PerspectiveCamera(36, 1, 0.3, 200);
     this._fitCam = new THREE.PerspectiveCamera(36, 1, 0.3, 200);
 
-    // Lights: warm key with soft shadows, cool fill + rim, hemisphere ambient.
-    this._baseLight = { hemi: 1.2, sun: 2.4, fill: 0.5, rim: 0.85 };
-    this.hemi = new THREE.HemisphereLight('#fff3e3', '#b4a4d8', this._baseLight.hemi);
+    // Lights: warm key with soft shadows, cool fill + rim, hemisphere ambient. Colours / levels come from the mood (setMood).
+    this._baseLight = { hemi: 1, sun: 3, fill: 0.4, rim: 0.5, env: 0.4 };
+    this.hemi = new THREE.HemisphereLight('#ffffff', '#ffffff', 1);
     scene.add(this.hemi);
-    this.sun = new THREE.DirectionalLight('#ffdcb0', this._baseLight.sun);
+    this._sunDir = new THREE.Vector3(-0.5, 1, 0.5).normalize();
+    this.sun = new THREE.DirectionalLight('#ffffff', 3);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
-    this.sun.shadow.bias = -0.0005;
-    this.sun.shadow.normalBias = 0.025;
-    if ('intensity' in this.sun.shadow) this.sun.shadow.intensity = 0.75;
+    const maxTex = renderer.capabilities.maxTextureSize || 4096;
+    this.sun.shadow.mapSize.set(Math.min(4096, maxTex), Math.min(4096, maxTex));
+    this.sun.shadow.bias = -0.0004;
+    this.sun.shadow.normalBias = 0.02;
     scene.add(this.sun);
     scene.add(this.sun.target);
-    this.fill = new THREE.DirectionalLight('#b9cfff', this._baseLight.fill);
+    this.fill = new THREE.DirectionalLight('#ffffff', 0.4);
     this.fill.position.set(6, 4, 5);
     scene.add(this.fill);
-    this.rim = new THREE.DirectionalLight('#d8e4ff', this._baseLight.rim);
+    this.rim = new THREE.DirectionalLight('#ffffff', 0.5);
     this.rim.position.set(2, 5, -7);
     scene.add(this.rim);
+    // Warm local lights for the evening moods (always present so shaders never recompile).
+    this.lamps = Array.from({ length: 4 }, () => { const l = new THREE.PointLight('#ffb765', 0, 5, 1.6); scene.add(l); return l; });
     // Win spotlight lives permanently (intensity 0) so lighting shaders never recompile mid-game.
     this.spot = new THREE.SpotLight('#fff2c0', 0, 0, 0.3, 0.55, 0);
     this.spot.position.set(0, 7, 0);
@@ -825,7 +229,7 @@ export class BoardView {
       pebble: new THREE.IcosahedronGeometry(0.034, 0).scale(1, 0.55, 0.8).translate(0, 0.008, 0),
     };
     tuftParts.forEach((g) => g.dispose());
-    const toonMat = (color, extra = {}) => new THREE.MeshToonMaterial({ color, gradientMap: gradientMap(), ...extra });
+    const toonMat = (color, extra = {}) => softMat({ color, ...extra });
     this._mat = {
       // depthTest off so marks stay visible on chairs/sofas/beds (they never share a cell with a token).
       mark: new THREE.MeshBasicMaterial({ map: this._tex.x, transparent: true, depthWrite: false, depthTest: false, toneMapped: false }),
@@ -1019,6 +423,10 @@ export class BoardView {
 
     this._buildDecor(board, roomAt, floorOf, hashStr(String(puzzle.id ?? '') + rooms.join('')));
 
+    // World around the board
+    this.world = buildWorld(this, puzzle);
+    board.add(this.world.group);
+
     // Room plaques
     this._buildPlaques(board, rooms, roomAt, info);
 
@@ -1049,401 +457,12 @@ export class BoardView {
       this.tokens.set(ch.id, { id: ch.id, ch, index: i, root, hop, fig, blob, cell: null, anim: null, materials: fig.userData.materials || [] });
     });
 
-    this._fitShadow();
+    this.setMood(this._moodOverride || defaultMood(puzzle));
     this._resize(true);
     this._applyCamera(DEFAULT_POLAR, DEFAULT_AZIMUTH, this._fitD);
     this.controls.update();
   }
 
-  /** One merged floor mesh per room, world-space UVs (texture spans 2×2 cells), per-room tint/offset. */
-  _buildFloors(board, roomAt, floorOf) {
-    const N = this.N, half = N / 2;
-    const tints = ['#ffffff', '#f1ecff', '#fff1e2', '#ecf7ec', '#ffeef4', '#eaf2ff', '#fff9e0'];
-    const keys = [];
-    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) { const k = roomAt(r, c); if (!keys.includes(k)) keys.push(k); }
-    const variant = new Map();
-    const same = (k, r, c) => r >= 0 && c >= 0 && r < N && c < N && roomAt(r, c) === k;
-    for (const k of keys) {
-      const floor = floorOf(k);
-      const v = variant.get(floor) || 0; variant.set(floor, v + 1);
-      const ou = v, ov = (v * 3) % 2;
-      const pos = [], nor = [], uv = [], idx = [];
-      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
-        if (roomAt(r, c) !== k) continue;
-        const x0 = c - half, z0 = r - half, n = pos.length / 3;
-        const u0 = (c + ou) / 2, u1 = (c + 1 + ou) / 2, v0 = -(r + ov) / 2, v1 = -(r + 1 + ov) / 2;
-        pos.push(x0, 0, z0, x0, 0, z0 + 1, x0 + 1, 0, z0 + 1, x0 + 1, 0, z0);
-        nor.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
-        uv.push(u0, v0, u0, v1, u1, v1, u1, v0);
-        idx.push(n, n + 1, n + 2, n, n + 2, n + 3);
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-      g.setIndex(idx);
-      const tint = new THREE.Color(tints[v % tints.length]);
-      const mat = new THREE.MeshToonMaterial({ color: tint, map: this._floorTexture(floor), gradientMap: gradientMap() });
-      if (floor === 'water') {
-        // Animated ripples/glints in world space on top of the drifting texture.
-        const U = this._timeU;
-        mat.onBeforeCompile = (sh) => {
-          sh.uniforms.uWTime = U;
-          sh.vertexShader = 'varying vec3 vWP;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-          sh.fragmentShader = 'uniform float uWTime;\nvarying vec3 vWP;\n' + sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
-  float rp = sin(vWP.x * 9.0 + uWTime * 1.6 + sin(vWP.z * 7.0 + uWTime)) * sin(vWP.z * 8.0 - uWTime * 1.3 + sin(vWP.x * 6.0 - uWTime * 0.7));
-  diffuseColor.rgb *= 0.96 + 0.04 * rp;
-  diffuseColor.rgb += smoothstep(0.6, 0.92, rp) * 0.09;`);
-        };
-        mat.customProgramCacheKey = () => 'waterRipple';
-      }
-      const mesh = new THREE.Mesh(g, mat);
-      mesh.receiveShadow = true;
-      board.add(mesh);
-
-      // Carpet rooms get a woven border along the room outline.
-      if (floor === 'carpet') {
-        const strips = { dark: [], light: [] };
-        const quad = (arr, xa, za, xb, zb, y) => {
-          const n = arr.length;
-          arr.push([xa, y, za, xa, y, zb, xb, y, zb, xb, y, za]);
-          return n;
-        };
-        for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
-          if (roomAt(r, c) !== k) continue;
-          const x0 = c - half, z0 = r - half, x1 = x0 + 1, z1 = z0 + 1;
-          const bN = !same(k, r - 1, c), bS = !same(k, r + 1, c), bW = !same(k, r, c - 1), bE = !same(k, r, c + 1);
-          for (const [band, a, w, y] of [['dark', 0.07, 0.075, 0.0016], ['light', 0.165, 0.025, 0.002]]) {
-            const ext = a + w;
-            // start/end trims: convex corners trim to the inner band, concave corners extend into the neighbour.
-            const sx = bW ? x0 + a : (same(k, r - 1, c - 1) || same(k, r + 1, c - 1) ? x0 : x0);
-            if (bN) {
-              const xs = bW ? x0 + a : (same(k, r - 1, c - 1) ? x0 - ext : x0) ;
-              const xe = bE ? x1 - a : (same(k, r - 1, c + 1) ? x1 + ext : x1);
-              quad(strips[band], Math.max(xs, -half), z0 + a, Math.min(xe, half), z0 + a + w, y);
-            }
-            if (bS) {
-              const xs = bW ? x0 + a : (same(k, r + 1, c - 1) ? x0 - ext : x0);
-              const xe = bE ? x1 - a : (same(k, r + 1, c + 1) ? x1 + ext : x1);
-              quad(strips[band], Math.max(xs, -half), z1 - a - w, Math.min(xe, half), z1 - a, y);
-            }
-            if (bW) {
-              const zs = bN ? z0 + a : (same(k, r - 1, c - 1) ? z0 - ext : z0);
-              const ze = bS ? z1 - a : (same(k, r + 1, c - 1) ? z1 + ext : z1);
-              quad(strips[band], x0 + a, Math.max(zs, -half), x0 + a + w, Math.min(ze, half), y);
-            }
-            if (bE) {
-              const zs = bN ? z0 + a : (same(k, r - 1, c + 1) ? z0 - ext : z0);
-              const ze = bS ? z1 - a : (same(k, r + 1, c + 1) ? z1 + ext : z1);
-              quad(strips[band], x1 - a - w, Math.max(zs, -half), x1 - a, Math.min(ze, half), y);
-            }
-            void sx;
-          }
-        }
-        for (const band of ['dark', 'light']) {
-          const qs = strips[band];
-          if (!qs.length) continue;
-          const P = [], Nn = [], I = [];
-          qs.forEach((q, i) => {
-            // ensure upward winding regardless of corner order
-            const [xa, y, za, , , zb, xb] = q;
-            const X0 = Math.min(xa, xb), X1 = Math.max(xa, xb), Z0 = Math.min(za, zb), Z1 = Math.max(za, zb);
-            P.push(X0, y, Z0, X0, y, Z1, X1, y, Z1, X1, y, Z0);
-            Nn.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
-            const n = i * 4; I.push(n, n + 1, n + 2, n, n + 2, n + 3);
-          });
-          const sg = new THREE.BufferGeometry();
-          sg.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
-          sg.setAttribute('normal', new THREE.Float32BufferAttribute(Nn, 3));
-          sg.setIndex(I);
-          const sm = new THREE.Mesh(sg, band === 'dark' ? this._mat.borderDark : this._mat.borderLight);
-          sm.receiveShadow = true; sm.raycast = noRaycast;
-          board.add(sm);
-        }
-      }
-    }
-  }
-
-  /** Room walls: dark base, body and lighter cap, merged per material. */
-  _buildWalls(board, roomAt) {
-    const N = this.N, h = (N - 1) / 2;
-    const T = WALL_T, L = 1 + T;
-    const body = [], base = [], cap = [];
-    const BASE_H = 0.04, CAP_H = 0.032;
-    const add = (vertical, x, z) => {
-      const sx = vertical ? 1 : 0;
-      const dims = (w, d) => (sx ? [w, d] : [d, w]);
-      let [w, d] = dims(T, L);
-      body.push(boxAt(w, WALL_H - CAP_H, d, x, (WALL_H - CAP_H) / 2, z));
-      [w, d] = dims(T + 0.034, L + 0.034);
-      base.push(boxAt(w, BASE_H, d, x, BASE_H / 2, z));
-      [w, d] = dims(T + 0.026, L + 0.026);
-      cap.push(boxAt(w, CAP_H, d, x, WALL_H - CAP_H / 2, z));
-    };
-    for (let r = 0; r < N; r++) {
-      for (let c = 0; c < N; c++) {
-        const x = c - h, z = r - h;
-        if (c + 1 < N && roomAt(r, c) !== roomAt(r, c + 1)) add(true, x + 0.5, z);
-        if (r + 1 < N && roomAt(r, c) !== roomAt(r + 1, c)) add(false, x, z + 0.5);
-      }
-    }
-    for (const [list, mat] of [[body, this._mat.wall], [base, this._mat.wallBase], [cap, this._mat.wallCap]]) {
-      if (!list.length) continue;
-      const g = mergeGeometries(list);
-      list.forEach((q) => q.dispose());
-      const m = new THREE.Mesh(g, mat);
-      m.castShadow = true; m.receiveShadow = true;
-      board.add(m);
-    }
-  }
-
-  /** Chunky bevelled wooden frame, dark plinth and a soft ground shadow. */
-  _buildFrame(board) {
-    const N = this.N, half = N / 2, F = FRAME_W;
-    const group = new THREE.Group();
-    const bev = 0.05;
-    const outer = roundedRectShape(half + F - bev, half + F - bev, 0.2);
-    const hole = new THREE.Path();
-    const hh = half + bev;
-    hole.moveTo(-hh, -hh); hole.lineTo(hh, -hh); hole.lineTo(hh, hh); hole.lineTo(-hh, hh); hole.closePath();
-    outer.holes.push(hole);
-    const bottom = -0.3;
-    const frameGeo = extrudeSlab(outer, FRAME_TOP - bottom - 2 * bev, FRAME_TOP, bev);
-    const frame = new THREE.Mesh(frameGeo, this._mat.frame);
-    frame.castShadow = true; frame.receiveShadow = true;
-    group.add(frame);
-    const pb = 0.04, pd = 0.12;
-    const plinthGeo = extrudeSlab(roundedRectShape(half + F + 0.12 - pb, half + F + 0.12 - pb, 0.28), pd, bottom + 0.02, pb);
-    const plinth = new THREE.Mesh(plinthGeo, this._mat.plinth);
-    plinth.receiveShadow = true;
-    group.add(plinth);
-    addOutlines(group, 0.022);
-    group.traverse((o) => { o.raycast = noRaycast; });
-    board.add(group);
-    // Soft ground shadow
-    const gmat = new THREE.MeshBasicMaterial({ map: this._tex.shadow, transparent: true, depthWrite: false, opacity: 0.85, toneMapped: false });
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), gmat);
-    const s = (N + 2 * F) * 1.75;
-    ground.scale.set(s, 1, s * 0.95);
-    ground.position.set(0.25, bottom + 0.02 - pd - 2 * pb - 0.02, 0.35);
-    ground.raycast = noRaycast;
-    board.add(ground);
-  }
-
-  /** Chess-style coordinates on the frame: letters a.. for columns (bottom + top), numbers 1.. for rows (left + right); row 1 is the north (far) row. */
-  _buildCoordLabels(board) {
-    const N = this.N, half = N / 2, y = FRAME_TOP + 0.06;
-    const ls = this._labelSize = 0.3 * THREE.MathUtils.clamp(N / 9, 1, 1.8); // readable at 16x16
-    const off = half + Math.max(FRAME_W / 2, ls / 2 + 0.04);
-    // Room plaques lean back over the top edge; keep the top letters clear of them.
-    const topOff = Math.max(off, half + 0.8 * (0.2 + 0.018 * N) + ls * 0.6);
-    this._labelOff = off; this._labelTopOff = topOff;
-    const group = new THREE.Group(); group.name = 'coords';
-    const cache = new Map();
-    const labelMat = (txt) => {
-      if (!cache.has(txt)) {
-        const cv = makeCanvas(64, 64), g = cv.getContext('2d');
-        g.font = `bold 44px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
-        g.lineWidth = 8; g.strokeStyle = 'rgba(40,24,12,0.9)'; g.strokeText(txt, 32, 34);
-        g.fillStyle = '#f6e7c1'; g.fillText(txt, 32, 34);
-        cache.set(txt, new THREE.SpriteMaterial({ map: canvasTexture(cv), transparent: true, depthWrite: false, toneMapped: false }));
-      }
-      return cache.get(txt);
-    };
-    const add = (txt, x, z) => {
-      const s = new THREE.Sprite(labelMat(txt));
-      s.scale.set(ls, ls, 1); s.position.set(x, y + (ls - 0.3) / 2, z); s.raycast = noRaycast; s.renderOrder = 5;
-      group.add(s);
-    };
-    for (let i = 0; i < N; i++) {
-      const pos = i - (N - 1) / 2;
-      const letter = String.fromCharCode(97 + i), num = String(i + 1);
-      add(letter, pos, off); add(letter, pos, -topOff);
-      add(num, -off, pos); add(num, off, pos);
-    }
-    board.add(group);
-  }
-
-  /** Instanced grass tufts / flowers / pebbles / shells / snow lumps along cell edges on outdoor floors. */
-  _buildDecor(board, roomAt, floorOf, seed) {
-    const N = this.N;
-    const r = prng(seed || 1);
-    const tufts = [], heads = [], pebbles = [];
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), v = new THREE.Vector3();
-    const mat = (x, y, z, sx, sy, sz, ry, rx = 0) => {
-      q.setFromEuler(e.set(rx, ry, 0));
-      return m4.compose(v.set(x, y, z), q, s.set(sx, sy, sz)).clone();
-    };
-    const grassCols = ['#4f9e45', '#62b24c', '#3f8c3c', '#79bf55'];
-    const flowerCols = ['#ffffff', '#ffd84d', '#ff9ec4', '#b9a6ff', '#ff8a6b'];
-    const shellCols = ['#fde0e3', '#fff4e6', '#f3c9a8', '#e8d6c0'];
-    const p = new THREE.Vector3();
-    for (let rr = 0; rr < N; rr++) for (let cc = 0; cc < N; cc++) {
-      const k = roomAt(rr, cc);
-      const floor = floorOf(k);
-      if (!OUTDOOR.has(floor) || this.objectsAt.has(keyOf(rr, cc))) continue;
-      this._cellPos(rr, cc, p);
-      const walled = (side) => {
-        const [dr, dc] = [[-1, 0], [1, 0], [0, -1], [0, 1]][side];
-        const r2 = rr + dr, c2 = cc + dc;
-        return !this._inBoard(r2, c2) || roomAt(r2, c2) !== k;
-      };
-      const count = floor === 'grass' ? 3 + ((r() * 3) | 0) : 1 + ((r() * 2) | 0);
-      for (let i = 0; i < count; i++) {
-        const side = (r() * 4) | 0;
-        const along = (r() - 0.5) * 0.84;
-        const d = (walled(side) ? 0.085 : 0.045) + r() * 0.03;
-        let lx, lz;
-        if (side === 0) { lx = along; lz = -0.5 + d; } else if (side === 1) { lx = along; lz = 0.5 - d; }
-        else if (side === 2) { lx = -0.5 + d; lz = along; } else { lx = 0.5 - d; lz = along; }
-        const X = p.x + lx, Z = p.z + lz, ry = r() * Math.PI * 2;
-        if (floor === 'grass') {
-          const kind = r();
-          if (kind < 0.85) {
-            const sc = 0.8 + r() * 0.5;
-            tufts.push({ m: mat(X, 0, Z, sc, sc, sc, ry), c: grassCols[(r() * grassCols.length) | 0] });
-            if (kind > 0.6) heads.push({ m: mat(X, 0.075 * sc, Z, 1, 0.8, 1, ry), c: flowerCols[(r() * flowerCols.length) | 0] });
-          } else {
-            const sc = 0.7 + r() * 0.6;
-            pebbles.push({ m: mat(X, 0, Z, sc, sc, sc, ry), c: ['#c9c4bd', '#b3aea8', '#ddd6cc'][(r() * 3) | 0] });
-          }
-        } else if (floor === 'sand') {
-          if (r() < 0.25) tufts.push({ m: mat(X, 0, Z, 0.8, 1.1, 0.8, ry), c: '#a9b85e' });
-          else { const sc = 0.55 + r() * 0.4; pebbles.push({ m: mat(X, 0, Z, sc, sc * 0.8, sc, ry), c: shellCols[(r() * shellCols.length) | 0] }); }
-        } else { // snow
-          const sc = 1 + r() * 0.8;
-          pebbles.push({ m: mat(X, -0.004, Z, sc * 1.3, sc * 0.7, sc * 1.2, ry), c: r() < 0.7 ? '#ffffff' : '#e4ecff' });
-        }
-      }
-    }
-    const col = new THREE.Color();
-    for (const [list, geo] of [[tufts, this._geo.tuft], [heads, this._geo.head], [pebbles, this._geo.pebble]]) {
-      if (!list.length) continue;
-      const im = new THREE.InstancedMesh(geo, geo === this._geo.tuft ? this._mat.decorWind : this._mat.decor, list.length);
-      list.forEach((it, i) => { im.setMatrixAt(i, it.m); im.setColorAt(i, col.set(it.c)); });
-      im.instanceMatrix.needsUpdate = true;
-      if (im.instanceColor) im.instanceColor.needsUpdate = true;
-      im.receiveShadow = true; im.castShadow = false; im.raycast = noRaycast;
-      board.add(im);
-    }
-  }
-
-  /**
-   * Room name plaques — same lettering size everywhere. Picks the room row-run (top rows first) that is long
-   * enough and free of tall objects; otherwise the plaque stands raised on the room's north wall and renders on top.
-   */
-  _buildPlaques(board, rooms, roomAt, info) {
-    const N = this.N, half = N / 2, hc = (N - 1) / 2;
-    this._plaqueH = 0.2 + 0.018 * N;
-    const hAt = (r, c) => this.objectsAt.get(keyOf(r, c))?.height ?? 0;
-    // blocked: something taller than a rug in the cell, or a tall object right behind (it would overhang the plaque)
-    const tall = (r, c) => hAt(r, c) > 0.08 || (r > 0 && hAt(r - 1, c) > 0.3);
-    const placed = [];
-    this._plaques = [];
-    const overlaps = (x0, x1, z, y) => placed.some((q) => Math.abs(q.z - z) < 0.5 && Math.abs(q.y - y) < this._plaqueH + 0.06
-      && x0 < q.x1 + 0.06 && x1 > q.x0 - 0.06);
-    const keys = [];
-    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) { const k = roomAt(r, c); if (!keys.includes(k)) keys.push(k); }
-    for (const k of keys) {
-      const name = String(info[k]?.name || k);
-      const W = this._plaqueH * measurePlaque(name);
-      // Row runs of this room, split at tall objects.
-      const runs = [];
-      let topRow = -1;
-      for (let r = 0; r < N; r++) {
-        let c = 0;
-        while (c < N) {
-          if (roomAt(r, c) !== k) { c++; continue; }
-          if (topRow < 0) topRow = r;
-          let a = c;
-          while (c < N && roomAt(r, c) === k) {
-            if (tall(r, c)) { if (c > a) runs.push({ r, a, b: c }); a = c + 1; }
-            c++;
-          }
-          if (c > a) runs.push({ r, a, b: c });
-        }
-      }
-      runs.sort((p, q) => (p.r - q.r) || ((q.b - q.a) - (p.b - p.a)) || (p.a - q.a));
-      let spot = null;
-      for (const run of runs) {
-        const len = run.b - run.a;
-        if (len - 0.14 < W) continue;
-        const left = run.a - half;
-        const zEdge = run.r - half;
-        // Centre short runs, otherwise sit near the run's left end.
-        const x0 = len <= 2 ? left + (len - W) / 2 : left + 0.1;
-        const y = 0.21, z = zEdge + 0.01;
-        if (overlaps(x0, x0 + W, z, y)) continue;
-        spot = { x0, y, z, onTop: false, row: run.r };
-        break;
-      }
-      if (!spot) {
-        // Fallback: stand raised on the room's north wall above the longest top-row stretch.
-        let best = null;
-        for (let c = 0; c < N; c++) {
-          if (roomAt(topRow, c) !== k) continue;
-          let b = c; while (b < N && roomAt(topRow, b) === k) b++;
-          if (!best || b - c > best.b - best.a) best = { a: c, b };
-          c = b;
-        }
-        const mid = (best.a + best.b) / 2 - half;
-        let x0 = THREE.MathUtils.clamp(mid - W / 2, -half - FRAME_W * 0.5, half + FRAME_W * 0.5 - W);
-        let y = 0.5;
-        const z = topRow - half + 0.02;
-        for (let tries = 0; tries < 6 && overlaps(x0, x0 + W, z, y); tries++) y += this._plaqueH + 0.1;
-        spot = { x0, y, z, onTop: true };
-      }
-      placed.push({ x0: spot.x0, x1: spot.x0 + W, z: spot.z, y: spot.y });
-      const g = this._makePlaque(name, W, spot);
-      board.add(g);
-      if (!spot.onTop) {
-        // cells whose standing tokens would hide this plaque (same row, under its x-range)
-        const cells = [];
-        for (let c = 0; c < N; c++) if (c - half + 1 > spot.x0 && c - half < spot.x0 + W) cells.push(keyOf(spot.row, c));
-        this._plaques.push({ g, cells, baseY: spot.y, lift: 0, target: 0 });
-      }
-    }
-    void hc; void rooms;
-  }
-
-  _makePlaque(name, W, { x0, y, z, onTop }) {
-    const H = this._plaqueH;
-    const tex = plaqueTexture(name, W / H);
-    tex.anisotropy = this._maxAniso;
-    const faceMat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.05, toneMapped: false, depthTest: !onTop, depthWrite: false });
-    const plaque = new THREE.Group();
-    const tilt = new THREE.Group();
-    tilt.rotation.x = -0.92; // lean back so it faces the default camera (and covers less of the cell below)
-    plaque.add(tilt);
-    const face = new THREE.Mesh(new THREE.PlaneGeometry(W, H), faceMat);
-    face.position.set(0, H / 2, 0.013);
-    tilt.add(face);
-    const backMat = onTop ? this._mat.plaqueBackTop : this._mat.plaqueBack;
-    const back = new THREE.Mesh(new THREE.BoxGeometry(W + 0.03, H + 0.03, 0.022).translate(0, H / 2, 0), backMat);
-    back.castShadow = !onTop;
-    tilt.add(back);
-    // little posts down to the floor / wall
-    const postH = onTop ? y - WALL_H + 0.03 : y + 0.03;
-    if (postH > 0.02) {
-      for (const px of [-W / 2 + 0.08, W / 2 - 0.08]) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.03, postH, 0.03).translate(0, -postH / 2 + 0.03, 0), backMat);
-        post.position.set(px, 0, -0.01);
-        post.castShadow = !onTop;
-        plaque.add(post);
-        (plaque.userData.posts ||= []).push(post);
-      }
-    }
-    if (onTop) {
-      back.renderOrder = 30; face.renderOrder = 31;
-      plaque.traverse((o) => { if (o.isMesh && o !== face && o !== back) o.renderOrder = 30; });
-    } else {
-      back.renderOrder = 0.5; face.renderOrder = 0.6;
-      plaque.traverse((o) => { if (o.isMesh && o !== face && o !== back) o.renderOrder = 0.5; });
-    }
-    plaque.position.set(x0 + W / 2, y, z);
-    plaque.traverse((o) => { o.raycast = noRaycast; });
-    return plaque;
-  }
 
   // ------------------------------------------------------------------ state sync
   setState(view) {
@@ -1718,6 +737,7 @@ export class BoardView {
         this.sun.intensity = this._baseLight.sun * (1 - 0.6 * e);
         this.fill.intensity = this._baseLight.fill * (1 - 0.5 * e);
         this.rim.intensity = this._baseLight.rim * (1 - 0.3 * e);
+        this.scene.environmentIntensity = this._baseLight.env * (1 - 0.5 * e);
       }, { ease: Ease.outCubic }));
       win.tweens.push(this._tweens.add(3200, (_, raw) => {
         const k = 1 - raw * 0.5;
@@ -1803,6 +823,7 @@ export class BoardView {
     this.sun.intensity = this._baseLight.sun;
     this.fill.intensity = this._baseLight.fill;
     this.rim.intensity = this._baseLight.rim;
+    this.scene.environmentIntensity = this._baseLight.env;
     for (const t of this.tokens.values()) { if (t.cell) this._resetHop(t); }
   }
 
@@ -1873,11 +894,47 @@ export class BoardView {
     }
     return { d, tz: target.z };
   }
+  /** Lighting mood: 'day' | 'golden' | 'night'. override=true keeps it for the next puzzles too. */
+  setMood(name, override = false) {
+    const m = MOODS[name] ? name : 'day', M = MOODS[m];
+    this.mood = m;
+    if (override) this._moodOverride = m;
+    const b = this._baseLight;
+    this.hemi.color.set(M.hemi[0]); this.hemi.groundColor.set(M.hemi[1]); b.hemi = M.hemi[2];
+    this.sun.color.set(M.sun[0]); b.sun = M.sun[1];
+    this.fill.color.set(M.fill[0]); b.fill = M.fill[1];
+    this.rim.color.set(M.rim[0]); b.rim = M.rim[1]; b.env = M.env;
+    this.hemi.intensity = b.hemi; this.sun.intensity = b.sun; this.fill.intensity = b.fill; this.rim.intensity = b.rim;
+    if ('intensity' in this.sun.shadow) this.sun.shadow.intensity = M.shadow;
+    this.scene.environment = moodEnvironment(this.renderer, m);
+    this.scene.environmentIntensity = M.env;
+    this.scene.background.set(M.fog); this.scene.fog.color.set(M.fog);
+    this._sunDir.set(...M.sunDir).normalize();
+    this.post.setGrade(M.grade);
+    setGlow(M.glow);
+    this.world?.setMood?.(m, M);
+    this._placeLamps(M.lamp);
+    this._fitShadow();
+    this._emit('mood', m);
+  }
+  /** Put the local lights on fires / lamps of the board first, then on the world's lamp posts. */
+  _placeLamps(level) {
+    const spots = [];
+    const warm = { campfire: 0.5, fireplace: 0.45, oven: 0.5, heater: 0.45, arcade: 0.8, tv: 0.7 };
+    for (const o of this.objectsAt.values()) if (warm[o.type]) spots.push({ p: o.group.position.clone().add(new THREE.Vector3(0, warm[o.type], 0.3)), pr: o.type === 'campfire' || o.type === 'fireplace' ? 0 : 1 });
+    spots.sort((a, b) => a.pr - b.pr);
+    for (const p of this.world?.lampSpots || []) spots.push({ p });
+    this.lamps.forEach((l, i) => {
+      const s = spots[i];
+      l.intensity = s ? level : 0;
+      if (s) l.position.copy(s.p);
+    });
+  }
   /** Aim the key light and fit its orthographic shadow frustum tightly around the board. */
   _fitShadow() {
-    const N = this.N, e = N / 2 + FRAME_W + 0.2;
+    const N = this.N, e = N / 2 + 2.6; // a little of the surrounding world receives / casts shadows too
     const D = N * 1.5 + 8;
-    this.sun.position.copy(SUN_DIR).multiplyScalar(D);
+    this.sun.position.copy(this._sunDir).multiplyScalar(D);
     this.sun.target.position.set(0, 0, 0);
     this.sun.target.updateMatrixWorld();
     const tmp = new THREE.OrthographicCamera();
@@ -1894,7 +951,7 @@ export class BoardView {
     sc.near = Math.max(0.1, -z1 - 0.5); sc.far = -z0 + 0.5;
     sc.updateProjectionMatrix();
     // keep the soft-edge size roughly constant in world units
-    this.sun.shadow.radius = 3;
+    this.sun.shadow.radius = 2.5;
   }
   _applyCamera(polar, azimuth, dist) {
     const dir = this._dirFrom(polar, azimuth);
@@ -1916,6 +973,7 @@ export class BoardView {
     const oldFit = this._fitD;
     const { d: fit, tz } = this._computeFit(DEFAULT_POLAR, DEFAULT_AZIMUTH);
     this._fitD = fit;
+    this.scene.fog.near = fit + this.N * 0.9 + 4; this.scene.fog.far = fit + this.N * 3.2 + 22;
     this.controls.minDistance = fit * 0.5;
     this.controls.maxDistance = fit * 1.45;
     const off = this.camera.position.clone().sub(this.controls.target);
@@ -2130,6 +1188,7 @@ export class BoardView {
     if (wt && !calm) wt.offset.set(0.006 * Math.sin(time * 0.7), 0.006 * Math.cos(time * 0.55));
 
     // Idle hooks (breathing figurines, flickering flames…) + token contact shadows
+    if (!calm) try { this.world?.update?.(time, dt); } catch (e) { console.error(e); this.world.update = null; }
     if (this.board) {
       for (const t of this.tokens.values()) {
         if (!t.root.visible) continue;
@@ -2145,7 +1204,7 @@ export class BoardView {
 
     if ((window.devicePixelRatio || 1) !== this._dprSeen) { this._dprSeen = window.devicePixelRatio || 1; this._resize(); }
     this._updateConfetti(dt);
-    if (this._w > 1 && this._h > 1) this.renderer.render(this.scene, this.camera);
+    if (this._w > 1 && this._h > 1) this.post.render(this.scene, this.camera);
   }
 
   // ------------------------------------------------------------------ portrait
@@ -2211,7 +1270,7 @@ export class BoardView {
     Object.values(this._mat).forEach((m) => m.dispose());
     Object.values(this._tex).forEach((t) => t.dispose());
     this._holdMat.dispose();
-    this._bgTex.dispose();
+    this.post.dispose();
     this.renderer.dispose();
     if (cv.parentNode) cv.parentNode.removeChild(cv);
     this._listeners = {};
@@ -2219,3 +1278,5 @@ export class BoardView {
     this.tokens.clear(); this.objectsAt.clear(); this.chips.clear();
   }
 }
+
+Object.assign(BoardView.prototype, boardKit);

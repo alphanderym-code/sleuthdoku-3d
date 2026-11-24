@@ -1,0 +1,71 @@
+<!doctype html>
+<!-- Screenshot harness. Query: scene=<key>|case=<n>, size=<n>, seed=<n>, solve=1 (place the solution), sel=1,
+     zoom=<f> (<1 = closer), polar/az=<deg>, tx/tz=<orbit target>, ui=0. Models: m=objects&o=tree,bush | m=figs | m=weapons. -->
+<html><head><meta charset="utf-8"><title>shot</title>
+<style>html,body{margin:0;height:100%;background:#8ab;overflow:hidden}#b{position:absolute;inset:0}#err{position:absolute;left:8px;top:8px;color:#c00;font:14px monospace;white-space:pre-wrap;background:#fffd}</style>
+<script type="importmap">{"imports":{"three":"../vendor/three/build/three.module.js","three/addons/":"../vendor/three/examples/jsm/"}}</script>
+</head><body><div id="b"></div><div id="err"></div>
+<script type="module">
+const err = (m) => { document.getElementById('err').textContent += m + '\n'; };
+addEventListener('error', (e) => err(`${e.message} ${e.filename}:${e.lineno}`));
+addEventListener('unhandledrejection', (e) => err('rejection ' + (e.reason?.stack || e.reason)));
+const ce = console.error.bind(console); console.error = (...a) => { err(a.map(String).join(' ').slice(0, 900)); ce(...a); };
+const q = new URLSearchParams(location.search), num = (k, d) => (q.has(k) ? +q.get(k) : d);
+const { BoardView } = await import('../js/render/scene.js');
+const { generatePuzzle } = await import('../js/model/generator.js');
+const { SCENES } = await import('../js/data/content.js');
+const { OBJECT_TYPES, FLOOR_TYPES } = await import('../js/model/objects.js');
+const { CASES } = await import('../js/puzzles/cases.js');
+const { WEAPON3D_IDS } = await import('../js/render/models/weapons3d.js');
+
+const HAIR = ['short', 'long', 'bun', 'bald', 'curly', 'ponytail', 'spiky'];
+const ACC = [null, 'hat', 'glasses', 'beard', 'mustache', 'bowtie', 'scarf'];
+const SKIN = ['#ffdfc4', '#e0ac69', '#a0693f', '#6b4226', '#f5cba7'];
+const HC = ['#2b1b10', '#d9a441', '#b5371f', '#3fa7d6', '#c451c4', '#e8e8e8', '#7a4a21'];
+const OC = ['#4f86c6', '#e63946', '#06d6a0', '#ffd23f', '#8338ec', '#ff7b00', '#2ec4b6', '#f472b6', '#3a86ff'];
+let puzzle, placements = {};
+const mode = q.get('m');
+if (mode) {
+  const list = mode === 'floors' ? FLOOR_TYPES : mode === 'objects' ? (q.get('o') ? q.get('o').split(',') : Object.keys(OBJECT_TYPES)) : mode === 'weapons' ? WEAPON3D_IDS : Array.from({ length: num('n', 16) }, (_, i) => i);
+  const N = num('size', Math.ceil(Math.sqrt(list.length)));
+  const objects = [], characters = [];
+  const floor = q.get('floor') || 'grass';
+  const rooms = mode === 'floors' ? Array.from({ length: N * 2 }, (_, r) => Array.from({ length: N * 2 }, (_, c) => String.fromCharCode(65 + (r >> 1) * N + (c >> 1))).join('')) : Array.from({ length: N }, () => 'A'.repeat(N));
+  const roomInfo = mode === 'floors' ? Object.fromEntries(Array.from({ length: N * N }, (_, i) => [String.fromCharCode(65 + i), { name: list[i] || 'wood', floor: list[i] || 'wood' }])) : { A: { name: mode, floor } };
+  list.forEach((t, i) => {
+    const r = Math.floor(i / N), c = i % N;
+    if (mode === 'objects') objects.push({ type: t, r, c, facing: q.get('f') || 's' });
+    else if (mode !== 'floors') {
+      const id = String.fromCharCode(65 + i);
+      characters.push({ id, name: 'N' + i, gender: i % 2 ? 'f' : 'm', victim: false, weapon: WEAPON3D_IDS[i % WEAPON3D_IDS.length], clues: [],
+        look: { skin: SKIN[i % 5], hair: HC[i % 7], outfit: OC[i % 9], hairStyle: HAIR[(i >> 1) % 7], accessory: ACC[(i * 3) % 7] } });
+      placements[id] = { r, c };
+    }
+  });
+  puzzle = { id: 'shot', title: mode, difficulty: 'easy', size: mode === 'floors' ? N * 2 : N, rooms, roomInfo, objects, characters, solution: placements, murderer: 'A', scene: q.get('scene') || undefined };
+} else if (q.has('scene')) {
+  puzzle = generatePuzzle({ scene: q.get('scene'), size: num('size', 7), difficulty: q.get('diff') || 'easy', seed: num('seed', 5), budgetMs: 200 });
+} else puzzle = CASES[num('case', 0)];
+window.__puzzle = puzzle;
+if (q.get('solve') === '1') placements = puzzle.solution;
+const v = new BoardView(document.getElementById('b'));
+window.__view = v;
+v.loadPuzzle(puzzle);
+const st = { placements, notes: {}, marks: [], autoMarks: [], selected: q.get('sel') ? puzzle.characters[0].id : null, hover: null };
+try { v.setState(st); } catch (e) { err('setState ' + e.stack); }
+if (q.has('mood')) v.setMood(q.get('mood'));
+const az = num('az', null), pol = num('polar', null), zoom = num('zoom', 1);
+setTimeout(() => {
+  const D = Math.PI / 180;
+  if (az !== null || pol !== null || zoom !== 1 || q.has('tx') || q.has('tz')) {
+    const cur = v.camera.position.clone().sub(v.controls.target);
+    const d = cur.length() * zoom;
+    if (q.has('tx')) v.controls.target.x = num('tx', 0);
+    if (q.has('tz')) v.controls.target.z = num('tz', 0);
+    v.controls.minDistance = 0.5;
+    v._applyCamera((pol ?? 42) * D, (az ?? 0) * D, d);
+    v.controls.update();
+  }
+}, 900);
+window.__ready = true;
+</script></body></html>
