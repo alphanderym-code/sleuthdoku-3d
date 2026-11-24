@@ -125,6 +125,7 @@ export class BoardView {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.autoUpdate = false; // refreshed by _tuneQuality
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Khronos PBR Neutral keeps pastel hues saturated (ACES/AgX washed the cartoon palette out).
     renderer.toneMapping = THREE.NeutralToneMapping;
@@ -850,7 +851,7 @@ export class BoardView {
       place(d);
       for (const p of pts) {
         v.copy(p).project(cam);
-        if (v.z > 1 || Math.abs(v.x) > 0.92 || Math.abs(v.y) > 0.9) return false;
+        if (v.z > 1 || Math.abs(v.x) > 0.9 || Math.abs(v.y) > 0.87) return false;
       }
       return true;
     };
@@ -939,7 +940,7 @@ export class BoardView {
     if (this._disposed) return;
     const w = Math.max(1, this.container.clientWidth | 0);
     const h = Math.max(1, this.container.clientHeight | 0);
-    const pr = Math.min(window.devicePixelRatio || 1, 2);
+    const pr = Math.min(window.devicePixelRatio || 1, this.post.level === 0 ? 1 : 2);
     if (!force && w === this._w && h === this._h && pr === this._pr) return;
     this._pr = pr;
     if (this.renderer.getPixelRatio() !== pr) this.renderer.setPixelRatio(pr);
@@ -1181,7 +1182,19 @@ export class BoardView {
 
     if ((window.devicePixelRatio || 1) !== this._dprSeen) { this._dprSeen = window.devicePixelRatio || 1; this._resize(); }
     this._updateConfetti(dt);
+    this._tuneQuality();
     if (this._w > 1 && this._h > 1) this.post.render(this.scene, this.camera);
+  }
+  /** Spend less on weak GPUs: shadow refresh rate, number of local lights and pixel ratio follow the quality level. */
+  _tuneQuality() {
+    const lv = this.post.level, big = this.N > 9;
+    const every = lv >= 3 ? (big ? 2 : 1) : lv === 2 ? 2 : 3;
+    this._frame = (this._frame || 0) + 1;
+    if (this._frame % every === 0) this.renderer.shadowMap.needsUpdate = true;
+    // lights at intensity 0 still cost shader time: hide them (recompiles, so only when the mood or the level changes)
+    const n = lv >= 2 ? 4 : lv === 1 ? 2 : 1;
+    this.lamps.forEach((l, i) => { const on = i < n && l.intensity > 0; if (l.visible !== on) l.visible = on; });
+    if (lv !== this._level) { this._level = lv; this._resize(); }
   }
 
   // ------------------------------------------------------------------ portrait

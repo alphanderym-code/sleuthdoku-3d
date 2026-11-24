@@ -48,7 +48,7 @@ export const FLOOR_BASE = {
   wood: '#f0c690', tile: '#aee8dd', grass: '#c0c84a', sand: '#f9d6a0',
   stone: '#d6c8b6', carpet: '#e5799c', snow: '#fcf6ec', checker: '#fff0c6',
   water: '#4cc6c8', brick: '#e29c78', dirt: '#dcb282',
-  fairway: '#a8c653', green: '#b9d45e', // golf (Extreme scenes)
+  fairway: '#a3b552', green: '#b4c45e', // golf (Extreme scenes)
 };
 
 /** Soft-edged (plateau) elliptical colour patch, drawn at the 9 wrap offsets so it tiles. */

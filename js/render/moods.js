@@ -45,13 +45,13 @@ export const MOODS = {
     sky: '#a9dcf5', horizon: '#e9f6e6', ground: '#b9c98a', fog: '#cfeaf0',
     sun: ['#ffe6b8', 3.3], sunDir: [-0.62, 1, 0.42], hemi: ['#a9c4ff', '#ffcf9a', 0.8], fill: ['#b0c0ff', 0.3], rim: ['#fff3dc', 0.4],
     env: 0.36, shadow: 0.92, lamp: 0, glow: 0,
-    grade: { exposure: 0.98, saturation: 1.12, contrast: 1.07, shadowTint: '#26378f', tintAmt: 0.14, vignette: 0.16, aoTint: '#463b7c' },
+    grade: { exposure: 0.98, saturation: 1.08, contrast: 1.07, shadowTint: '#26378f', tintAmt: 0.14, vignette: 0.16, aoTint: '#463b7c' },
   },
   golden: {
     sky: '#ffc9a0', horizon: '#ffe3b8', ground: '#c9a27a', fog: '#f7cfa8',
-    sun: ['#ffbf7a', 3.5], sunDir: [-0.95, 0.85, 0.38], hemi: ['#c3b6ff', '#ffc79a', 0.85], fill: ['#a9a4ff', 0.5], rim: ['#ffd2a0', 0.6],
-    env: 0.38, shadow: 0.82, lamp: 1.2, glow: 0.45,
-    grade: { exposure: 1.0, saturation: 1.1, contrast: 1.04, shadowTint: '#4a2f8f', tintAmt: 0.14, vignette: 0.22, aoTint: '#54357a' },
+    sun: ['#ffcb8c', 3.4], sunDir: [-0.95, 0.8, 0.38], hemi: ['#a8b0ff', '#ffc9a0', 0.95], fill: ['#8fa0ff', 0.6], rim: ['#ffb0c0', 0.6],
+    env: 0.38, shadow: 0.9, lamp: 1.2, glow: 0.45,
+    grade: { exposure: 0.98, saturation: 1.1, contrast: 1.09, shadowTint: '#3a2a9a', tintAmt: 0.2, vignette: 0.2, aoTint: '#4a327f' },
   },
   night: {
     sky: '#2f37b8', horizon: '#6a4fd0', ground: '#2c2a86', fog: '#3038a0',
