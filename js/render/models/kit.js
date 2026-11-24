@@ -1,56 +1,65 @@
-// Shared helpers for the procedural cartoon models: materials, outlines, geometry caches, merging.
+// Shared helpers for the procedural models: soft materials, geometry caches, merging, colour helpers.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-export const OUTLINE_COLOR = '#2b2b3a';
+import '../softshade.js';
 
 // ---------------------------------------------------------------------------
-// Materials
+// Materials: soft, matte "vinyl toy" MeshStandardMaterials (no outlines, no toon steps).
+// opts: flat (faceted normals), emissive, emissiveIntensity, double, rough (0..1), metal (0..1)
 // ---------------------------------------------------------------------------
-let _gradient = null;
-/** 3-step toon gradient map (shared). */
-export function gradientMap() {
-  if (!_gradient) {
-    _gradient = new THREE.DataTexture(new Uint8Array([90, 180, 255]), 3, 1, THREE.RedFormat);
-    _gradient.minFilter = THREE.NearestFilter;
-    _gradient.magFilter = THREE.NearestFilter;
-    _gradient.generateMipmaps = false;
-    _gradient.needsUpdate = true;
-  }
-  return _gradient;
+/** Base soft material; accepts any MeshStandardMaterial parameter. */
+export function softMat(params = {}) {
+  return new THREE.MeshStandardMaterial({ roughness: 0.78, metalness: 0, ...params });
 }
-
-const _toonCache = new Map();
-/** Shared (cached) toon material for a colour. Never disposed by disposeObject. */
-export function toon(color, { flat = false, emissive = null, emissiveIntensity = 1, double = false } = {}) {
-  const key = `${color}|${flat}|${emissive}|${emissiveIntensity}|${double}`;
-  let m = _toonCache.get(key);
-  if (!m) {
-    m = new THREE.MeshToonMaterial({ color, gradientMap: gradientMap() });
-    m.userData.flat = flat; // MeshToonMaterial has no flatShading: add() flattens geometry normals instead
-    if (emissive) { m.emissive.set(emissive); m.emissiveIntensity = emissiveIntensity; }
-    if (double) m.side = THREE.DoubleSide;
-    m.userData.shared = true;
-    _toonCache.set(key, m);
-  }
-  return m;
-}
-
-/** Unshared toon material (owned by the model, e.g. for per-token flashing or animated glow). */
-export function toonOwn(color, { flat = false, emissive = null, emissiveIntensity = 1, double = false } = {}) {
-  const m = new THREE.MeshToonMaterial({ color, gradientMap: gradientMap() });
-  m.userData.flat = flat;
+function make(color, { flat = false, emissive = null, emissiveIntensity = 1, double = false, rough = 0.78, metal = 0 } = {}) {
+  const m = softMat({ color, roughness: rough, metalness: metal });
+  m.userData.flat = flat; // add() flattens geometry normals (works with merged geometry too)
   if (emissive) { m.emissive.set(emissive); m.emissiveIntensity = emissiveIntensity; }
   if (double) m.side = THREE.DoubleSide;
   return m;
 }
 
+const _toonCache = new Map();
+/** Shared (cached) material for a colour. Never disposed by disposeObject. */
+export function toon(color, opts = {}) {
+  const { flat = false, emissive = null, emissiveIntensity = 1, double = false, rough = 0.78, metal = 0 } = opts;
+  const key = [color, flat, emissive, emissiveIntensity, double, rough, metal].join('|');
+  let m = _toonCache.get(key);
+  if (!m) { m = make(color, opts); m.userData.shared = true; _toonCache.set(key, m); }
+  return m;
+}
+
+/** Unshared material (owned by the model, e.g. for per-token flashing or animated glow). */
+export function toonOwn(color, opts = {}) { return make(color, opts); }
+
+// Lamps, windows, screens: materials whose emission follows the time of day (0 = day, 1 = night).
+const _glows = new Map();
+let _glowK = 0;
+/** Shared material that glows with `emissive`: intensity `day` in daylight up to `night` after dark. */
+export function glowMat(color, emissive = color, { day = 0.15, night = 1.6, rough = 0.5 } = {}) {
+  const key = [color, emissive, day, night, rough].join('|');
+  let m = _glows.get(key);
+  if (!m) {
+    m = make(color, { emissive, rough });
+    m.userData.shared = true; m.userData.glow = [day, night];
+    m.emissiveIntensity = day + (night - day) * _glowK;
+    _glows.set(key, m);
+  }
+  return m;
+}
+/** Set the day/night glow level (0..1) of every glowMat. */
+export function setGlow(k) {
+  _glowK = k;
+  for (const m of _glows.values()) { const [a, b] = m.userData.glow; m.emissiveIntensity = a + (b - a) * k; }
+}
+
 let _vcMat = null;
-/** Shared toon material that reads per-vertex colours (used with mergeVC). */
+/** Shared material that reads per-vertex colours (used with mergeVC). */
 export function toonVC() {
   if (!_vcMat) {
-    _vcMat = new THREE.MeshToonMaterial({ color: '#ffffff', vertexColors: true, gradientMap: gradientMap() });
+    _vcMat = softMat({ color: '#ffffff', vertexColors: true });
     _vcMat.userData.shared = true;
     _vcMat.userData.flat = false;
   }
@@ -58,14 +67,14 @@ export function toonVC() {
 }
 
 const _texCache = new Map();
-/** Cached shared toon material with a canvas texture (never disposed). */
-export function texToon(key, w, h, draw, { repeat = null } = {}) {
+/** Cached shared material with a canvas texture (never disposed). */
+export function texToon(key, w, h, draw, { repeat = null, rough = 0.85 } = {}) {
   let m = _texCache.get(key);
   if (!m) {
     const t = canvasTex(w, h, draw);
     t.userData.owned = false;
     if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat[0], repeat[1]); }
-    m = new THREE.MeshToonMaterial({ color: '#ffffff', map: t, gradientMap: gradientMap() });
+    m = softMat({ color: '#ffffff', map: t, roughness: rough });
     m.userData.shared = true;
     _texCache.set(key, m);
   }
@@ -84,7 +93,7 @@ export function canvasTex(w, h, draw) {
 }
 
 // ---------------------------------------------------------------------------
-// Outlines / disposal
+// Geometry helpers / disposal
 // ---------------------------------------------------------------------------
 /** Faceted normals for a low-poly look (non-indexed + per-face normals). */
 export function flatten(geo) {
@@ -96,38 +105,8 @@ export function flatten(geo) {
   return g;
 }
 
-let _outlineMat = null;
-function outlineMaterial() {
-  if (!_outlineMat) {
-    _outlineMat = new THREE.MeshBasicMaterial({ color: OUTLINE_COLOR, side: THREE.BackSide });
-    _outlineMat.userData.shared = true;
-  }
-  return _outlineMat;
-}
-
-/** Adds an inverted-hull outline child to every mesh under root (unless mesh.userData.noOutline). */
-export function addOutlines(root, thickness = 0.018) {
-  const meshes = [];
-  root.traverse((o) => { if (o.isMesh && !o.userData.noOutline && !o.userData.isOutline) meshes.push(o); });
-  const size = new THREE.Vector3(), center = new THREE.Vector3();
-  for (const mesh of meshes) {
-    const g = mesh.geometry;
-    if (!g.boundingBox) g.computeBoundingBox();
-    const bb = g.boundingBox;
-    bb.getSize(size); bb.getCenter(center);
-    const ms = mesh.scale;
-    const sx = 1 + (2 * thickness) / Math.max(size.x * Math.abs(ms.x), 0.01);
-    const sy = 1 + (2 * thickness) / Math.max(size.y * Math.abs(ms.y), 0.01);
-    const sz = 1 + (2 * thickness) / Math.max(size.z * Math.abs(ms.z), 0.01);
-    const o = new THREE.Mesh(g, outlineMaterial());
-    o.userData.isOutline = true;
-    o.scale.set(sx, sy, sz);
-    o.position.set(center.x * (1 - sx), center.y * (1 - sy), center.z * (1 - sz)); // scale about bbox centre
-    o.castShadow = false; o.receiveShadow = false;
-    mesh.add(o);
-  }
-  return root;
-}
+/** Kept for API compatibility: the soft look has no outlines. */
+export function addOutlines(root) { return root; }
 
 /** Disposes geometries, unshared materials and owned textures under obj. */
 export function disposeObject(obj) {

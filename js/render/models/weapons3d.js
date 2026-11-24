@@ -1,136 +1,211 @@
-// Held weapon props for suspect figurines. Each builder returns a THREE.Group with the grip at the
-// origin and the weapon extending along +y (the figurine tilts it forward). Units match the figurine
-// (head radius 0.22). Materials are created with toonOwn and pushed to `mats` for hit flashes.
+// Held weapon props for suspect figurines: chunky soft toy versions. Each builder returns a THREE.Group with the
+// grip at the origin and the weapon extending along +y (guns/crossbow along +z). Native size ~0.3-0.45; the
+// figurine scales it up a little. Two draw calls per weapon: a matte vertex-coloured mesh and a satin-metal one.
+// Materials are created with toonOwn (own, flashable) and pushed to `mats`.
 import * as THREE from 'three';
-import { add, toonOwn, addOutlines, BOX, CYL, SPH, CONE, TOR, CAPS } from './kit.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { toonOwn, CAPS, RB, TOR } from './kit.js';
 
-const T = { noOutline: true, shadow: false };
 const PI = Math.PI;
 
-const BUILDERS = {
-  knife(g, m) {
-    add(g, CYL(0.02, 0.02, 0.1, 8), m.wood, { pos: [0, 0.01, 0] });
-    add(g, BOX(0.09, 0.02, 0.03), m.dark, { pos: [0, 0.065, 0] });
-    add(g, BOX(0.045, 0.2, 0.014), m.steel, { pos: [0, 0.17, 0] });
-    add(g, CONE(0.0225, 0.07, 4), m.steel, { pos: [0, 0.305, 0], rot: [0, PI / 4, 0], scale: [1, 1, 0.31] });
-  },
-  letteropener(g, m) {
-    add(g, CYL(0.016, 0.016, 0.08, 8), m.gold, { pos: [0, 0.01, 0] });
-    add(g, BOX(0.06, 0.016, 0.022), m.gold, { pos: [0, 0.055, 0] });
-    add(g, BOX(0.03, 0.2, 0.01), m.steel, { pos: [0, 0.16, 0] });
-    add(g, CONE(0.015, 0.07, 4), m.steel, { pos: [0, 0.295, 0], rot: [0, PI / 4, 0], scale: [1, 1, 0.33] });
-  },
-  shears(g, m) {
-    for (const s of [-1, 1]) {
-      add(g, CAPS(0.012, 0.09, 3, 6), m.red, { pos: [s * 0.03, 0.0, 0], rot: [0, 0, s * 0.3] });
-      add(g, BOX(0.026, 0.2, 0.012), m.steel, { pos: [s * 0.015, 0.2, 0], rot: [0, 0, -s * 0.07] });
+// ---- shared soft-geometry helpers (also used by figurine.js) ----------------------------------
+const _gc = new Map();
+const gcache = (key, f) => { let g = _gc.get(key); if (!g) { g = f(); _gc.set(key, g); } return g; };
+/** Unit sphere (radius 1), scale it into an ellipsoid. */
+export const U = (ws = 8, hs = 6) => gcache(`u${ws}x${hs}`, () => new THREE.SphereGeometry(1, ws, hs));
+/** Tapered capsule from y=0 (radius r0) to y=len (radius r1), rounded at both ends. */
+export const T = (r0, r1, len, seg = 8) => gcache(`t${r0}|${r1}|${len}|${seg}`, () => {
+  const pts = [];
+  for (let i = 0; i <= 4; i++) { const a = -PI / 2 + (i / 4) * (PI / 2); pts.push(new THREE.Vector2(Math.max(r0 * Math.cos(a), 0.0001), r0 * Math.sin(a))); }
+  for (let i = 0; i <= 4; i++) { const a = (i / 4) * (PI / 2); pts.push(new THREE.Vector2(Math.max(r1 * Math.cos(a), 0.0001), len + r1 * Math.sin(a))); }
+  return new THREE.LatheGeometry(pts, seg);
+});
+
+const _m4 = new THREE.Matrix4(), _pm = new THREE.Matrix4(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+const _e = new THREE.Euler(), _e2 = new THREE.Euler(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _s = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
+const _c0 = new THREE.Color(), _c1 = new THREE.Color();
+
+/**
+ * Merges parts into one vertex-coloured geometry. part: { g: geometry, c: '#hex' | [lo, hi, y0, y1] (vertical gradient),
+ * p: [x,y,z], r: [rx,ry,rz], ry: yaw applied after r, s: [sx,sy,sz], d: [x,y,z] (aligns +y), m: Matrix4 applied last }.
+ */
+export function vcMerge(parts, dy = 0) {
+  const gs = [];
+  for (const p of parts) {
+    const g = p.g.index ? p.g.toNonIndexed() : p.g.clone();
+    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+    if (p.d) _q.setFromUnitVectors(_up, _v2.set(...p.d).normalize());
+    else {
+      _q.setFromEuler(_e.set(...(p.r || [0, 0, 0])));
+      if (p.ry) _q.premultiply(_q2.setFromEuler(_e2.set(0, p.ry, 0)));
     }
-    add(g, SPH(0.016, 8, 6), m.dark, { pos: [0, 0.095, 0], ...T });
+    _m4.compose(_v.set(...(p.p || [0, 0, 0])), _q, _s.set(...(p.s || [1, 1, 1])));
+    if (p.m) _m4.premultiply(p.m);
+    if (dy) { _pm.makeTranslation(0, dy, 0); _m4.premultiply(_pm); }
+    g.applyMatrix4(_m4);
+    const pos = g.attributes.position, n = pos.count, arr = new Float32Array(n * 3);
+    if (Array.isArray(p.c)) {
+      _c0.set(p.c[0]); _c1.set(p.c[1]);
+      for (let i = 0; i < n; i++) {
+        const t = Math.min(1, Math.max(0, (pos.getY(i) - p.c[2]) / (p.c[3] - p.c[2])));
+        arr[i * 3] = _c0.r + (_c1.r - _c0.r) * t; arr[i * 3 + 1] = _c0.g + (_c1.g - _c0.g) * t; arr[i * 3 + 2] = _c0.b + (_c1.b - _c0.b) * t;
+      }
+    } else {
+      _c0.set(p.c || '#ffffff');
+      for (let i = 0; i < n; i++) { arr[i * 3] = _c0.r; arr[i * 3 + 1] = _c0.g; arr[i * 3 + 2] = _c0.b; }
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+    gs.push(g);
+  }
+  return mergeGeometries(gs, false);
+}
+
+/** Own (flashable) vertex-colour material. */
+export function vcMat(rough, metal = 0) {
+  const m = toonOwn('#ffffff', { rough, metal });
+  m.vertexColors = true;
+  return m;
+}
+
+// ---- palette ----------------------------------------------------------------------------------
+const C = {
+  steel: '#d8e0e8', dark: '#4a4a5e', wood: '#b9774a', gold: '#f0c24a', red: '#e5584c', rope: '#dcb976', cloth: '#c4569e', cloth2: '#8f3f78',
+  candle: '#fff3dc', flame: '#ffb12e', glass: '#bdeedd', liquid: '#5fd57a', cream: '#fff6e4',
+};
+const SX = (r, y, z = r) => [r, y, z];
+
+// Builders receive (a, b): a(geo, color, pos, opts) adds a matte part, b(...) a satin-metal part.
+const BUILDERS = {
+  knife(a, b) {
+    a(CAPS(0.03, 0.07, 2, 8), C.wood, [0, 0, 0]);
+    b(RB(0.11, 0.032, 0.05, 0.015, 2), C.gold, [0, 0.085, 0]);
+    b(T(0.05, 0.012, 0.2), C.steel, [0, 0.095, 0], { s: [1, 1, 0.32] });
   },
-  pistol(g, m) {
-    add(g, BOX(0.045, 0.12, 0.05), m.wood, { pos: [0, 0.0, 0], rot: [0, 0, 0.18] });
-    add(g, BOX(0.055, 0.06, 0.2), m.dark, { pos: [0, 0.085, 0.07] });
-    add(g, CYL(0.018, 0.018, 0.08, 8), m.steel, { pos: [0, 0.085, 0.2], rot: [PI / 2, 0, 0] });
-    add(g, TOR(0.03, 0.006, 6, 10, PI), m.dark, { pos: [0, 0.045, 0.02], rot: [0, PI / 2, PI], ...T });
+  letteropener(a, b) {
+    b(T(0.024, 0.02, 0.1), C.gold, [0, -0.05, 0]);
+    b(U(), C.gold, [0, 0.07, 0], { s: SX(0.04, 0.026, 0.026) });
+    b(T(0.03, 0.007, 0.22), C.steel, [0, 0.08, 0], { s: [1, 1, 0.28] });
+    b(U(), C.gold, [0, -0.06, 0], { s: SX(0.032, 0.032) });
   },
-  crossbow(g, m) {
-    add(g, BOX(0.045, 0.045, 0.3), m.wood, { pos: [0, 0.07, 0.05] });
-    add(g, BOX(0.3, 0.025, 0.03), m.wood, { pos: [0, 0.07, 0.19] });
-    add(g, BOX(0.026, 0.02, 0.1), m.red, { pos: [0, 0.098, 0.12], ...T });
-    add(g, CYL(0.006, 0.006, 0.28, 5), m.dark, { pos: [0, 0.07, 0.17], rot: [0, 0, PI / 2], ...T });
-    add(g, BOX(0.04, 0.1, 0.04), m.wood, { pos: [0, 0.0, 0] });
+  shears(a, b) {
+    for (const s of [-1, 1]) {
+      a(TOR(0.034, 0.012, 6, 12), C.red, [s * 0.036, -0.055, 0], { r: [0, 0, 0] });
+      a(CAPS(0.014, 0.05, 3, 8), C.red, [s * 0.016, -0.005, 0], { r: [0, 0, s * 0.35] });
+      b(T(0.032, 0.008, 0.24), C.steel, [s * 0.005, 0.0, 0], { s: [1, 1, 0.28], r: [0, 0, -s * 0.1] });
+    }
+    b(U(8, 6), C.dark, [0, 0.012, 0.012], { s: SX(0.016, 0.016) });
   },
-  rope(g, m) {
-    for (let i = 0; i < 3; i++) add(g, TOR(0.07 - i * 0.005, 0.017, 6, 16), m.rope, { pos: [0, 0.05 + i * 0.03, 0.0], rot: [PI / 2, 0, i * 0.5] });
-    add(g, CAPS(0.015, 0.1, 3, 6), m.rope, { pos: [0.06, -0.03, 0], rot: [0, 0, 0.4] });
+  pistol(a, b) {
+    a(RB(0.064, 0.15, 0.075, 0.028, 2), C.wood, [0, -0.01, 0], { r: [0, 0, 0.1] });
+    a(RB(0.078, 0.085, 0.27, 0.034, 2), C.dark, [0, 0.085, 0.07]);
+    b(CAPS(0.025, 0.05, 2, 8), C.steel, [0, 0.085, 0.22], { r: [PI / 2, 0, 0] });
+    a(TOR(0.032, 0.009, 6, 12, PI), C.dark, [0, 0.03, 0.02], { r: [0, PI / 2, PI] });
   },
-  scarf(g, m) {
-    add(g, CAPS(0.032, 0.12, 4, 8), m.cloth, { pos: [0, 0.0, 0] });
-    add(g, BOX(0.075, 0.2, 0.014), m.cloth, { pos: [0.0, -0.1, 0.02], rot: [0.2, 0, 0.12] });
-    add(g, BOX(0.075, 0.16, 0.014), m.cloth2, { pos: [0.05, -0.08, -0.015], rot: [-0.15, 0, -0.1] });
-    add(g, BOX(0.06, 0.02, 0.02), m.cloth2, { pos: [0, 0.02, 0.0], ...T });
+  crossbow(a, b) {
+    a(CAPS(0.026, 0.07, 4, 8), C.wood, [0, 0, 0]);
+    a(RB(0.065, 0.065, 0.38, 0.028, 2), C.wood, [0, 0.07, 0.07]);
+    for (const s of [-1, 1]) a(CAPS(0.022, 0.12, 4, 8), C.wood, [s * 0.13, 0.07, 0.2], { r: [0, 0, PI / 2 - s * 0.1], ry: s * 0.2 });
+    b(CAPS(0.01, 0.17, 3, 6), C.cream, [0, 0.07, 0.17], { r: [0, 0, PI / 2], ry: 0 });
+    a(CAPS(0.014, 0.26, 3, 6), C.red, [0, 0.11, 0.18], { r: [PI / 2, 0, 0] });
+    b(T(0.02, 0.002, 0.05, 8), C.steel, [0, 0.11, 0.35], { d: [0, 0, 1] });
   },
-  candlestick(g, m) {
-    add(g, CYL(0.05, 0.06, 0.02, 12), m.gold, { pos: [0, 0.0, 0] });
-    add(g, CYL(0.013, 0.02, 0.16, 8), m.gold, { pos: [0, 0.1, 0] });
-    add(g, SPH(0.03, 8, 6), m.gold, { pos: [0, 0.13, 0], scale: [1, 0.7, 1] });
-    add(g, CYL(0.04, 0.03, 0.025, 10), m.gold, { pos: [0, 0.2, 0] });
-    add(g, CYL(0.015, 0.015, 0.1, 8), m.candle, { pos: [0, 0.26, 0] });
-    add(g, CONE(0.012, 0.04, 6), m.flame, { pos: [0, 0.33, 0], ...T });
+  rope(a) {
+    for (let i = 0; i < 3; i++) a(TOR(0.085 - i * 0.006, 0.032, 10, 24), C.rope, [0, 0.03 + i * 0.05, 0], { r: [PI / 2, 0, i * 0.5] });
+    a(CAPS(0.026, 0.14, 4, 8), C.rope, [0.08, -0.04, 0.02], { r: [0, 0, 0.5] });
+    a(TOR(0.09, 0.011, 6, 24), C.red, [0, 0.085, 0], { r: [PI / 2, 0, 0] });
   },
-  wrench(g, m) {
-    add(g, BOX(0.035, 0.26, 0.016), m.steel, { pos: [0, 0.09, 0] });
-    add(g, TOR(0.045, 0.02, 6, 14, PI * 1.5), m.steel, { pos: [0, 0.255, 0], rot: [0, 0, PI * 0.75] });
-    add(g, CYL(0.025, 0.025, 0.016, 8), m.steel, { pos: [0, -0.04, 0], rot: [PI / 2, 0, 0], ...T });
+  scarf(a) {
+    a(CAPS(0.05, 0.12, 5, 12), C.cloth, [0, 0.0, 0], { r: [0, 0, 0.0] });
+    a(RB(0.1, 0.24, 0.04, 0.02, 2), C.cloth, [0.0, -0.14, 0.04], { r: [0.12, 0, 0.1] });
+    a(RB(0.1, 0.2, 0.04, 0.02, 2), C.cloth2, [0.07, -0.12, -0.03], { r: [-0.1, 0, -0.1] });
+    a(RB(0.108, 0.03, 0.046, 0.014, 2), C.cream, [0.0, -0.17, 0.045], { r: [0.12, 0, 0.1] });
+    a(RB(0.108, 0.03, 0.046, 0.014, 2), C.cream, [0.07, -0.15, -0.03], { r: [-0.1, 0, -0.1] });
   },
-  hammer(g, m) {
-    add(g, CYL(0.016, 0.02, 0.28, 8), m.wood, { pos: [0, 0.08, 0] });
-    add(g, BOX(0.14, 0.06, 0.06), m.steel, { pos: [0, 0.235, 0] });
-    add(g, BOX(0.03, 0.05, 0.05), m.dark, { pos: [0.085, 0.235, 0], ...T });
+  candlestick(a, b) {
+    b(U(), C.gold, [0, 0.0, 0], { s: SX(0.075, 0.03, 0.075) });
+    b(T(0.022, 0.028, 0.15), C.gold, [0, 0.01, 0]);
+    b(U(), C.gold, [0, 0.1, 0], { s: SX(0.04, 0.03, 0.04) });
+    b(U(), C.gold, [0, 0.19, 0], { s: SX(0.058, 0.03, 0.058) });
+    a(CAPS(0.026, 0.09, 2, 8), C.candle, [0, 0.265, 0]);
+    a(U(10, 8), C.flame, [0, 0.37, 0], { s: SX(0.026, 0.045, 0.026) });
   },
-  golfclub(g, m) {
-    add(g, CYL(0.014, 0.014, 0.1, 8), m.dark, { pos: [0, 0.02, 0] });
-    add(g, CYL(0.008, 0.012, 0.32, 8), m.steel, { pos: [0, 0.23, 0] });
-    add(g, BOX(0.06, 0.05, 0.09), m.steel, { pos: [0, 0.4, 0.035], rot: [0.35, 0, 0] });
+  wrench(a, b) {
+    b(RB(0.06, 0.29, 0.034, 0.016, 2), C.steel, [0, 0.1, 0]);
+    b(TOR(0.06, 0.026, 8, 20, PI * 1.5), C.steel, [0, 0.29, 0], { r: [0, 0, PI * 0.75], s: [1, 1, 0.8] });
+    b(U(), C.steel, [0, -0.045, 0], { s: SX(0.04, 0.04, 0.02) });
+    a(CAPS(0.032, 0.08, 2, 8), C.red, [0, -0.01, 0]);
   },
-  mallet(g, m) {
-    add(g, CYL(0.016, 0.016, 0.3, 8), m.wood, { pos: [0, 0.14, 0] });
-    add(g, CYL(0.06, 0.06, 0.14, 12), m.red, { pos: [0, 0.34, 0], rot: [0, 0, PI / 2] });
-    for (const s of [-1, 1]) add(g, CYL(0.064, 0.064, 0.015, 12), m.gold, { pos: [s * 0.065, 0.34, 0], rot: [0, 0, PI / 2], ...T });
+  hammer(a, b) {
+    a(T(0.028, 0.024, 0.3), C.wood, [0, -0.06, 0]);
+    b(RB(0.19, 0.085, 0.085, 0.034, 2), C.steel, [0, 0.285, 0]);
+    a(RB(0.04, 0.09, 0.09, 0.02, 2), C.red, [0.1, 0.285, 0]);
   },
-  flaregun(g, m) {
-    add(g, BOX(0.04, 0.1, 0.05), m.red, { pos: [0, 0.02, 0], rot: [0.2, 0, 0] });
-    add(g, CYL(0.032, 0.032, 0.16, 10), m.red, { pos: [0, 0.14, 0.03] });
-    add(g, CYL(0.026, 0.026, 0.02, 10), m.flame, { pos: [0, 0.23, 0.03], ...T });
+  golfclub(a, b) {
+    a(T(0.026, 0.02, 0.12), C.dark, [0, -0.05, 0]);
+    b(T(0.015, 0.012, 0.34), C.steel, [0, 0.06, 0]);
+    b(RB(0.1, 0.07, 0.15, 0.03, 2), C.steel, [0, 0.43, 0.04], { r: [0.3, 0, 0] });
+    a(RB(0.05, 0.02, 0.1, 0.01, 2), C.red, [0, 0.46, 0.05], { r: [0.3, 0, 0] });
   },
-  skipole(g, m) {
-    add(g, CYL(0.016, 0.016, 0.07, 8), m.dark, { pos: [0, 0.0, 0] });
-    add(g, CYL(0.009, 0.009, 0.36, 8), m.steel, { pos: [0, 0.2, 0] });
-    add(g, TOR(0.045, 0.008, 6, 12), m.dark, { pos: [0, 0.3, 0], rot: [PI / 2, 0, 0], ...T });
-    add(g, CONE(0.014, 0.06, 6), m.steel, { pos: [0, 0.41, 0] });
+  mallet(a) {
+    a(T(0.026, 0.022, 0.32), C.wood, [0, -0.04, 0]);
+    a(CAPS(0.075, 0.1, 6, 14), C.red, [0, 0.33, 0], { r: [0, 0, PI / 2] });
+    for (const s of [-1, 1]) a(U(), C.gold, [s * 0.105, 0.33, 0], { s: [0.03, 0.079, 0.079] });
   },
-  shovel(g, m) {
-    add(g, CYL(0.016, 0.016, 0.34, 8), m.wood, { pos: [0, 0.12, 0] });
-    add(g, BOX(0.07, 0.016, 0.03), m.wood, { pos: [0, 0.3, 0], ...T });
-    add(g, BOX(0.11, 0.14, 0.015), m.steel, { pos: [0, 0.37, 0] });
-    add(g, CONE(0.055, 0.05, 3), m.steel, { pos: [0, 0.465, 0], rot: [0, 0, PI], scale: [1, 1, 0.28] });
+  flaregun(a, b) {
+    a(RB(0.066, 0.14, 0.08, 0.03, 2), C.red, [0, -0.01, 0], { r: [0, 0, 0.12] });
+    a(CAPS(0.05, 0.13, 6, 12), C.red, [0, 0.1, 0.07], { r: [PI / 2, 0, 0] });
+    b(CAPS(0.036, 0.02, 2, 8), C.steel, [0, 0.1, 0.19], { r: [PI / 2, 0, 0] });
+    a(U(10, 8), C.flame, [0, 0.1, 0.225], { s: SX(0.034, 0.034, 0.02) });
+    a(TOR(0.03, 0.009, 6, 12, PI), C.dark, [0, 0.03, 0.02], { r: [0, PI / 2, PI] });
   },
-  poison(g, m) {
-    add(g, SPH(0.06, 12, 10), m.glass, { pos: [0, 0.07, 0] });
-    add(g, SPH(0.047, 10, 8), m.liquid, { pos: [0, 0.065, 0], ...T });
-    add(g, CYL(0.02, 0.025, 0.07, 8), m.glass, { pos: [0, 0.15, 0] });
-    add(g, CYL(0.026, 0.022, 0.03, 8), m.wood, { pos: [0, 0.2, 0] });
+  skipole(a, b) {
+    a(T(0.026, 0.022, 0.1), C.dark, [0, -0.05, 0]);
+    b(T(0.014, 0.012, 0.36), C.steel, [0, 0.06, 0]);
+    a(TOR(0.055, 0.012, 6, 16), C.dark, [0, 0.36, 0], { r: [PI / 2, 0, 0] });
+    b(T(0.02, 0.004, 0.06, 8), C.steel, [0, 0.4, 0]);
+    a(TOR(0.045, 0.01, 6, 14, PI * 1.3), C.red, [0, -0.02, 0], { r: [0, PI / 2, 0] });
   },
-  syringe(g, m) {
-    add(g, CYL(0.027, 0.027, 0.17, 10), m.glass, { pos: [0, 0.12, 0] });
-    add(g, CYL(0.02, 0.02, 0.09, 8), m.liquid, { pos: [0, 0.1, 0], ...T });
-    add(g, BOX(0.09, 0.012, 0.03), m.steel, { pos: [0, 0.21, 0] });
-    add(g, CYL(0.007, 0.007, 0.08, 6), m.steel, { pos: [0, 0.01, 0], ...T });
-    add(g, CYL(0.005, 0.005, 0.1, 6), m.steel, { pos: [0, 0.285, 0], ...T });
-    add(g, BOX(0.05, 0.012, 0.025), m.red, { pos: [0, 0.0, 0], ...T });
+  shovel(a, b) {
+    a(T(0.02, 0.018, 0.34), C.wood, [0, -0.05, 0]);
+    a(TOR(0.042, 0.015, 6, 12), C.wood, [0, -0.07, 0], { r: [0, 0, 0], s: [1, 0.8, 1] });
+    b(T(0.026, 0.02, 0.07), C.steel, [0, 0.28, 0]);
+    b(U(), C.steel, [0, 0.4, 0], { s: [0.085, 0.1, 0.017] });
+  },
+  poison(a, b) {
+    b(U(16, 12), '#7ad98f', [0, 0.075, 0], { s: SX(0.078, 0.082, 0.078) });
+    b(T(0.028, 0.024, 0.07), '#a8e8bd', [0, 0.14, 0]);
+    a(CAPS(0.03, 0.02, 4, 8), C.wood, [0, 0.235, 0]);
+    a(U(10, 8), C.cream, [0, 0.07, 0.07], { s: [0.045, 0.045, 0.015] });
+    a(U(8, 6), C.dark, [0, 0.075, 0.082], { s: [0.016, 0.018, 0.006] });
+  },
+  syringe(a, b) {
+    b(T(0.036, 0.036, 0.15), '#aeeedb', [0, 0.03, 0]);
+    a(T(0.026, 0.026, 0.1), C.liquid, [0, 0.045, 0.0], { s: [1, 1, 1.0] });
+    b(RB(0.12, 0.02, 0.05, 0.01, 2), C.steel, [0, 0.19, 0]);
+    b(CAPS(0.012, 0.08, 3, 8), C.steel, [0, -0.04, 0]);
+    a(U(10, 8), C.red, [0, -0.1, 0], { s: SX(0.04, 0.016, 0.04) });
+    b(T(0.01, 0.003, 0.1, 8), C.steel, [0, 0.2, 0]);
   },
   // Generic fallback for unknown ids: a short club.
-  _generic(g, m) {
-    add(g, CYL(0.02, 0.025, 0.28, 8), m.wood, { pos: [0, 0.1, 0] });
-    add(g, SPH(0.04, 8, 6), m.wood, { pos: [0, 0.26, 0] });
+  _generic(a) {
+    a(T(0.028, 0.04, 0.26), C.wood, [0, -0.04, 0]);
   },
-};
-
-const COLORS = {
-  steel: ['#c9d3dc'], dark: ['#3a3d46'], wood: ['#8a5a32'], gold: ['#e3b73f'], red: ['#c4413a'],
-  rope: ['#c9a66b'], cloth: ['#b04a8a'], cloth2: ['#8e3a70'], candle: ['#f4efe0'],
-  flame: ['#ffb02e', { emissive: '#ff8a00', emissiveIntensity: 0.6 }],
-  glass: ['#cfeee6'], liquid: ['#58c46b', { emissive: '#2f9a4a', emissiveIntensity: 0.25 }],
 };
 
 /** Builds a held weapon prop group (grip at origin, +y along the weapon). `mats` receives its materials. */
 export function createWeapon3d(id, mats = []) {
   const g = new THREE.Group();
   g.name = `weapon:${id}`;
-  const m = {};
-  for (const k of Object.keys(COLORS)) { m[k] = toonOwn(COLORS[k][0], COLORS[k][1]); mats.push(m[k]); }
-  (BUILDERS[id] || BUILDERS._generic)(g, m);
-  addOutlines(g, 0.012);
+  const A = [], B = [];
+  const mk = (list) => (geo, c, p = [0, 0, 0], o = {}) => list.push({ g: geo, c, p, ...o });
+  (BUILDERS[id] || BUILDERS._generic)(mk(A), mk(B));
+  for (const [list, mat] of [[A, vcMat(0.55)], [B, vcMat(0.35, 0.3)]]) {
+    if (!list.length) continue;
+    mats.push(mat);
+    const m = new THREE.Mesh(vcMerge(list), mat);
+    m.castShadow = true; m.receiveShadow = true;
+    g.add(m);
+  }
   return g;
 }
 

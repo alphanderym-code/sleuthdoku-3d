@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- Screenshot harness for the real game page: opens case ?case=<n> inside an iframe (&js=<code run in the frame after start>). -->
+<html><head><meta charset="utf-8"><style>html,body,iframe{margin:0;width:100%;height:100%;border:0;overflow:hidden}iframe{display:block}</style></head><body>
+<iframe id="f" src="../index.html?debug"></iframe>
+<script>
+const q = new URLSearchParams(location.search), f = document.getElementById('f');
+const tick = setInterval(() => {
+  const cards = f.contentDocument?.querySelectorAll('.case-card');
+  if (!(cards?.length > 1)) return; // 1 = sample case shown before the modules are loaded
+  clearInterval(tick);
+  if (q.get('case') !== null) cards[+q.get('case')].click();
+  setTimeout(() => {
+    f.contentDocument.querySelectorAll('.modal.open [data-close], .modal:not([hidden]) [data-close]').forEach((b) => b.click());
+    if (q.get('js')) f.contentWindow.eval(q.get('js'));
+  }, 900);
+}, 100);
+</script></body></html>

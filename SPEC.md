@@ -183,7 +183,9 @@ js/puzzles/cases.js   generator agent (phase 2: hand-made cases)
 js/data/content.js    content agent (names, looks, scenes)
 js/audio/sfx.js       content agent
 js/render/scene.js    render agent (BoardView)
-js/render/models.js   render agent (procedural low-poly cartoon models; models/extra.js = golf + zoo objects)
+js/render/{layout,textures,boardkit}.js   board measurements, canvas textures, floors + walls + kerb
+js/render/{moods,softshade,post,world}.js  lighting moods, soft shading, post-processing, world around the board
+js/render/models.js   render agent (procedural soft toy models in models/; kit.js = materials + geometry helpers)
 tests/*.mjs           model/generator agents (run with `node tests/x.mjs`)
 ```
 All model code (`js/model/*`, `js/data/*`, `js/puzzles/*`) must be pure ES modules: no DOM, no three.js — runnable in Node.
@@ -301,13 +303,15 @@ Input: LEFT mouse / ONE finger = gameplay (tap / hold / paint). RIGHT mouse or T
 Camera: tilted ~60° from horizontal looking at board, limited orbit (azimuth ±35°, polar 20°–65°), zoom clamped.
 
 ## Visual style
-Flat-ish board, cartoon. Chunky toon-shaded (MeshToonMaterial with 3-step gradient) low-poly objects built from
-primitives, thick dark outlines (inverted-hull, color #2b2b3a), soft pastel room floors with subtle per-floor pattern
-(CanvasTexture), short raised dark walls along room boundaries, room name labels as small flags/plaques. Figurines:
-chunky pawn-like characters (rounded body in outfit color, big head with skin color, hair by style, accessory),
-with a base disc showing the letter. Victim figurine has a pale tint. Placement = hop + squash/stretch; removal = pop.
+Sunny vinyl-toy diorama; the full direction is in `dev/ART_GUIDE.md`. Chunky rounded models in soft matte materials
+(MeshStandardMaterial patched by `render/softshade.js`), no outlines and no toon steps, painted CanvasTexture floors, low
+rounded walls, a pale kerb around the board, room names on small plaques. The board sits in a themed world
+(`render/world.js`: town, park, farm, forest, coast, sea, snow, airport). Three moods (`render/moods.js`): day, golden,
+night; each scene has a default and the player can switch (button or key L). Post-processing (`render/post.js`): ambient
+occlusion, bloom, tone mapping and grading, with quality levels 3..0 that adapt to the frame rate (`?gfx=0..3` locks one).
+Figurines: round-bodied people with big heads (outfit, skin, hair by style, accessory) and a base disc showing the letter.
+Victim figurine has a pale tint. Placement = hop + squash/stretch; removal = pop.
 Notes = small floating letter chips on a cell; X marks = red painted X decal; auto marks = faint grey X.
-Background: soft gradient, warm light + ambient + subtle shadows.
 
 ## Controls / UX
 - Click a suspect card (or token) → select.

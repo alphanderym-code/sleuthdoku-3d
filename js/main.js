@@ -35,6 +35,7 @@ const modsReady = (async () => {
 // ---------- storage ----------
 const K_SOLVED = 'sleuthdoku:solved';
 const K_PROG = (id) => `sleuthdoku:progress:${id}`;
+const MOOD_NEXT = { day: 'golden', golden: 'night', night: 'day' };
 const K_MUTE = 'sleuthdoku:muted';
 function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
@@ -142,6 +143,7 @@ function loadPuzzle(p) {
     board = new BoardViewClass(hud.canvasEl);
     board.loadPuzzle(p);
     wireBoard();
+    hud.setMood(board.mood);
     // portraits
     document.querySelectorAll('#suspects .card').forEach(el => {
       const ch = p.characters.find(c => c.id === el.dataset.id);
@@ -266,6 +268,7 @@ function onAction(action, payload) {
     }
     case 'back': sfx.click(); showMenu(); break;
     case 'resetcam': sfx.click(); board?.resetCamera(); break;
+    case 'mood': if (board?.setMood) { sfx.click(); board.setMood(MOOD_NEXT[board.mood] || 'day', true); hud.setMood(board.mood); } break;
     case 'random': sfx.click(); generateRandom(); break;
     case 'winback': hud.closeModals(); showMenu(); break;
     case 'winnext': nextCase(); break;
@@ -345,6 +348,7 @@ function onKey(e) {
   } else if (k === 'n') state.setTool('note');
   else if (k === 'x') state.setTool('x');
   else if (k === 'e') state.setTool('erase');
+  else if (k === 'l') onAction('mood');
 }
 
 init();
