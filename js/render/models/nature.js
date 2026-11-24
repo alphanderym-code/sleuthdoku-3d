@@ -1,157 +1,214 @@
 // Natural scenery builders: (g, r, ph) => void. Each fits a 1x1 cell, rests on y=0, front faces +z.
+// Foliage comes from foliage.js (leaf-card balls, flowers, smooth rocks); wind is driven by foliage.windU.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  add, addVC, addMerged, toon, toonOwn, texToon, rng, shade, mix,
-  RB, BOX, CYL, SPH, ICO, CONE, TOR, CAPS,
+  add, addVC, addMerged, mergeVC, toon, toonOwn, toonVC, RB, CYL, SPH, TOR, CONE,
 } from './kit.js';
-import { PI, C, T, flameMat, makeSteam, makeFireGlow, legs4, pick } from './common.js';
+import { PI, C, T, flameMat, makeFireGlow, pick } from './common.js';
+import { foliageMat, treeGeo, bushGeo, rockGeo, flowerGeo, grassTuftGeo, leafBallGeo } from './foliage.js';
+
+const _M = new THREE.Matrix4(), _E = new THREE.Euler(), _Q = new THREE.Quaternion();
+/** Clone of a coloured geometry moved into place (position/normal/color only). */
+function place(geo, x, y, z, ry = 0, s = 1, rx = 0, rz = 0) {
+  const g = geo.clone();
+  _M.compose(new THREE.Vector3(x, y, z), _Q.setFromEuler(_E.set(rx, ry, rz)), new THREE.Vector3(s, s, s));
+  g.applyMatrix4(_M);
+  return g;
+}
+const merge = (list) => mergeGeometries(list, false);
+const flat = (g) => (g.index ? g.toNonIndexed() : g);
+/** Lathe turned into a coloured non-indexed geometry: colour(y, ny) -> [r,g,b]. */
+function latheVC(points, segs, colour) {
+  let g = new THREE.LatheGeometry(points, segs);
+  g = flat(g); g.deleteAttribute('uv');
+  const p = g.attributes.position, n = g.attributes.normal, c = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) { const k = colour(p.getY(i), n.getY(i), Math.hypot(p.getX(i), p.getZ(i))); c[i * 3] = k[0]; c[i * 3 + 1] = k[1]; c[i * 3 + 2] = k[2]; }
+  g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  return g;
+}
+const hexRGB = (h) => { const c = new THREE.Color(h); return [c.r, c.g, c.b]; };
+const mixRGB = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+
+const _leafCache = new Map();
+const cached = (k, f) => { let g = _leafCache.get(k); if (!g) { g = f(); _leafCache.set(k, g); } return g; };
 
 export const NATURE_BUILDERS = {
   tree(g, r, ph) {
-    add(g, CYL(0.075, 0.12, 0.5, 10), C.woodDark, { pos: [0, 0.25, 0] });
-    for (let i = 0; i < 3; i++) { // root flares
-      const a = i * 2.1 + r();
-      add(g, SPH(0.06, 8, 6), C.woodDark, { pos: [Math.cos(a) * 0.1, 0.03, Math.sin(a) * 0.1], scale: [1.2, 0.6, 1], ...T });
+    const kind = r() < 0.72 ? 'round' : 'tall';
+    const t = treeGeo(kind, Math.floor(r() * 4));
+    const root = new THREE.Group(); root.scale.setScalar(Math.min(0.92, 1.46 / t.height)); g.add(root);
+    add(root, t.trunk, toonVC());
+    add(root, t.crown, foliageMat());
+    const mode = r(), parts = [];
+    if (mode < 0.7 && t.blobs.length) {
+      const fruit = mode < 0.4;
+      const n = fruit ? 6 : 12;
+      for (let i = 0; i < n; i++) {
+        const b = t.blobs[Math.floor(r() * t.blobs.length)], a = r() * PI * 2, e = 0.05 + r() * 0.85;
+        const k = 1.04, sy = typeof b[4] === 'number' ? b[4] : b[4]?.sy ?? 1;
+        const pos = [b[0] + Math.cos(a) * Math.cos(e) * b[3] * k, b[1] + Math.sin(e) * b[3] * sy * k, b[2] + Math.sin(a) * Math.cos(e) * b[3] * k];
+        if (fruit) parts.push({ geo: SPH(0.05, 8, 6), pos, color: '#ee4b4b' }, { geo: SPH(0.012, 4, 3), pos: [pos[0], pos[1] + 0.05, pos[2]], color: '#5a3a28' });
+        else parts.push({ geo: SPH(0.042, 7, 5), pos, scale: [1, 0.6, 1], color: pick(r, ['#fffafc', '#ffc9e2', '#fff1a8']) });
+      }
+      addVC(root, parts);
     }
-    const fol = new THREE.Group(); fol.position.y = 0.45; g.add(fol);
-    const blobs = [[0, 0.17, 0, 0.3, C.leaf], [0.19, 0.3, 0.05, 0.22, C.leaf2], [-0.18, 0.31, -0.06, 0.21, C.leaf3], [0.0, 0.5, -0.03, 0.19, C.leaf2], [-0.06, 0.2, 0.22, 0.18, C.leaf3], [0.1, 0.22, -0.21, 0.19, C.leaf]];
-    for (const [x, y, z, s, c] of blobs) add(fol, ICO(s, 1), toon(c, { flat: true }), { pos: [x, y, z], rot: [r() * 3, r() * 3, 0] });
-    const fruit = r() < 0.55;
-    const parts = [];
-    for (let i = 0; i < (fruit ? 5 : 8); i++) {
-      const b = blobs[i % 4 === 3 ? 0 : i % 4];
-      const a = r() * PI * 2, e = 0.15 + r() * 0.8;
-      const dir = [Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e)];
-      parts.push({ geo: SPH(fruit ? 0.035 : 0.03, 8, 6), pos: [b[0] + dir[0] * b[3] * 0.98, b[1] + dir[1] * b[3] * 0.98, b[2] + dir[2] * b[3] * 0.98], color: fruit ? '#e84a4a' : pick(r, ['#ffffff', '#ffc6e0', '#fff2a8']) });
-    }
-    addVC(fol, parts);
-    g.userData.idle = (t) => { fol.rotation.z = 0.025 * Math.sin(t * 1.3 + ph); fol.rotation.x = 0.02 * Math.sin(t * 1.1 + ph * 2); };
+    g.userData.idle = (tm) => { root.rotation.z = 0.012 * Math.sin(tm * 1.3 + ph); root.rotation.x = 0.009 * Math.sin(tm * 1.1 + ph * 2); };
   },
 
   bush(g, r, ph) {
+    const kind = r() < 0.3 ? 'flower' : 'round';
     const fol = new THREE.Group(); g.add(fol);
-    const blobs = [[0, 0.22, 0, 0.26, C.leaf3], [0.22, 0.19, 0.08, 0.2, C.leaf], [-0.21, 0.2, -0.04, 0.21, C.leaf], [0.03, 0.38, -0.08, 0.17, C.leaf2], [-0.08, 0.15, 0.24, 0.16, C.leaf2], [0.16, 0.16, -0.22, 0.17, C.leaf3]];
-    for (const [x, y, z, s, c] of blobs) add(fol, ICO(s, 1), toon(c, { flat: true }), { pos: [x, y, z], rot: [r() * 3, r() * 3, 0] });
-    const parts = [];
-    const col = pick(r, ['#e0405a', '#5b6fd6', '#a06ad8']);
-    for (let i = 0; i < 9; i++) {
-      const b = blobs[i % blobs.length]; const a = r() * PI * 2, e = 0.1 + r() * 0.7;
-      parts.push({ geo: SPH(0.028, 8, 6), pos: [b[0] + Math.cos(a) * Math.cos(e) * b[3], b[1] + Math.sin(e) * b[3], b[2] + Math.sin(a) * Math.cos(e) * b[3]], color: col });
-    }
-    for (let i = 0; i < 5; i++) { // light leaf accents
-      const b = blobs[i]; parts.push({ geo: SPH(0.04, 6, 5), pos: [b[0] + 0.04, b[1] + b[3] * 0.85, b[2] + 0.03], scale: [1.4, 0.5, 1], color: C.leaf2 });
-    }
-    addVC(fol, parts);
-    g.userData.idle = (t) => { fol.rotation.z = 0.02 * Math.sin(t * 1.5 + ph); const s = 1 + 0.012 * Math.sin(t * 1.9 + ph); fol.scale.set(s, 1, s); };
+    add(fol, bushGeo(kind, Math.floor(r() * 4)), foliageMat());
+    fol.rotation.y = r() * 6;
+    g.userData.idle = (t) => { const s = 1 + 0.01 * Math.sin(t * 1.9 + ph); fol.scale.set(s, 1 + 0.01 * Math.sin(t * 1.5 + ph), s); };
   },
 
   boulder(g, r) {
-    add(g, new THREE.DodecahedronGeometry(0.36, 0), toon(C.stone, { flat: true }), { pos: [0, 0.2, 0], scale: [1, 0.62, 0.9], rot: [0.2, 0.5, 0.1] });
-    add(g, new THREE.DodecahedronGeometry(0.2, 0), toon(C.stoneLight, { flat: true }), { pos: [-0.22, 0.12, 0.2], rot: [0.4, 0.2, 0], scale: [1, 0.8, 1] });
-    add(g, new THREE.DodecahedronGeometry(0.13, 0), toon(C.stoneDark, { flat: true }), { pos: [0.28, 0.08, 0.22], rot: [0.4, 0.2, 0] });
-    add(g, ICO(0.2, 1), toon('#79b866', { flat: true }), { pos: [0.02, 0.37, -0.02], scale: [1.2, 0.34, 0.95], rot: [0, 0.6, 0], noOutline: true });
-    add(g, ICO(0.09, 1), toon('#8fcf7a', { flat: true }), { pos: [-0.17, 0.3, -0.1], scale: [1.2, 0.4, 1], noOutline: true });
-    const parts = [];
-    for (let i = 0; i < 4; i++) parts.push({ geo: CONE(0.018, 0.1 + r() * 0.05, 5), pos: [-0.2 + r() * 0.35, 0.43, -0.15 + r() * 0.25], rot: [0, 0, (r() - 0.5) * 0.5], color: C.leaf4 });
-    parts.push({ geo: SPH(0.022, 6, 5), pos: [0.06, 0.41, 0.05], color: '#ffffff' }, { geo: SPH(0.02, 6, 5), pos: [-0.1, 0.38, 0.08], color: '#ffc6e0' });
-    addVC(g, parts);
-    for (let i = 0; i < 3; i++) add(g, new THREE.DodecahedronGeometry(0.04, 0), toon(C.stoneLight, { flat: true }), { pos: [0.3 - i * 0.17, 0.03, 0.38 - r() * 0.06], ...T });
+    const v = Math.floor(r() * 4);
+    const rocks = [place(rockGeo(v, 1), 0, 0, 0, r() * 6, 1.18)];
+    rocks.push(place(rockGeo(v + 1, 0.4), -0.3, 0, 0.24, r() * 6, 0.46), place(rockGeo(v + 2, 0), 0.3, 0, 0.3, r() * 6, 0.3), place(rockGeo(v + 3, 0.2), 0.27, 0, -0.27, r() * 6, 0.34));
+    add(g, merge(rocks), toonVC());
+    const fl = [place(grassTuftGeo(v), 0.02, 0.34, -0.04, r() * 6, 1.1), place(grassTuftGeo(v + 1), -0.26, 0.0, 0.34, r() * 6, 0.9), place(grassTuftGeo(v + 2), 0.38, 0.0, 0.05, r() * 6, 0.8)];
+    const cols = ['#fff4e4', '#ffd84d', '#ff9ac0', '#b07ae0'];
+    for (let i = 0; i < 3; i++) { const a = r() * 6; fl.push(place(flowerGeo(cols[(v + i) % 4], i + v), Math.cos(a) * 0.12, 0.33, Math.sin(a) * 0.1, r() * 6, 0.75)); }
+    fl.push(place(flowerGeo(cols[(v + 1) % 4], 1), -0.3, 0.0, 0.36, 1, 0.7), place(flowerGeo(cols[(v + 2) % 4], 2), 0.33, 0.0, 0.2, 2, 0.7));
+    add(g, merge(fl), foliageMat());
   },
 
   plant(g, r, ph) {
-    add(g, CYL(0.23, 0.17, 0.3, 16), '#d9805a', { pos: [0, 0.15, 0] });
-    add(g, CYL(0.25, 0.25, 0.05, 16), '#e8946c', { pos: [0, 0.31, 0] });
-    add(g, CYL(0.2, 0.2, 0.01, 14), '#5a3a28', { pos: [0, 0.335, 0], ...T });
-    add(g, TOR(0.2, 0.012, 5, 20), '#b8603a', { pos: [0, 0.2, 0], rot: [PI / 2, 0, 0], ...T });
-    const lf = new THREE.Group(); lf.position.y = 0.33; g.add(lf);
-    const leaf = new THREE.SphereGeometry(1, 8, 6); leaf.translate(0, 0, 1);
-    const parts = [];
-    const rings = [[7, 0.55, 0.2, 0.09, 0.025], [6, 0.95, 0.17, 0.08, 0.022], [4, 1.25, 0.14, 0.07, 0.02]];
-    rings.forEach(([n, elev, len, wd, th], ri) => {
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * PI * 2 + ri * 0.5 + r() * 0.3;
-        parts.push({ geo: leaf, scale: [wd, th, len + r() * 0.05], rot: [-elev, 0, 0], ry: a, pos: [0, 0.02 + ri * 0.03, 0], color: ri % 2 ? C.leaf : C.leaf3 });
-      }
-    });
-    parts.push({ geo: SPH(0.045, 8, 6), pos: [0.0, 0.38, 0.0], color: '#ff7b9c' }, { geo: SPH(0.03, 8, 6), pos: [0.0, 0.43, 0.0], color: '#ffd84d' });
-    addVC(lf, parts, { noOutline: true });
-    g.userData.idle = (t) => { lf.rotation.z = 0.04 * Math.sin(t * 1.6 + ph); lf.rotation.x = 0.03 * Math.sin(t * 1.3 + ph * 1.7); };
+    const pot = latheVC([[0, 0], [0.15, 0], [0.19, 0.012], [0.232, 0.25], [0.255, 0.262], [0.262, 0.292], [0.25, 0.312], [0.215, 0.305], [0.2, 0.275], [0, 0.275]].map(([x, y]) => new THREE.Vector2(x, y)), 22,
+      (y, ny, rr) => (y > 0.24 ? mixRGB(hexRGB('#f0a07c'), hexRGB('#ffb996'), (y - 0.24) / 0.07) : y > 0.272 && rr < 0.21 ? hexRGB('#6a4630') : mixRGB(hexRGB('#d8704c'), hexRGB('#ec8c64'), y / 0.25)));
+    const soil = mergeVC([{ geo: CYL(0.205, 0.205, 0.02, 18), pos: [0, 0.275, 0], color: '#6a4630' }, { geo: TOR(0.218, 0.017, 6, 22), pos: [0, 0.14, 0], rot: [PI / 2, 0, 0], color: '#3fb8af' }]);
+    add(g, merge([pot, soil]), toonVC());
+    const v = Math.floor(r() * 4);
+    const leaves = cached('plant' + v, () => leafBallGeo({
+      blobs: [[0, 0.2, 0, 0.19, 1.15], [0.1 + v * 0.01, 0.3, 0.04, 0.14], [-0.1, 0.33, -0.05, 0.13], [0.0, 0.44, 0.0, 0.12]], leaves: 120, leafSize: 0.15, aspect: 1.45, tilt: 0.75, seed: 70 + v, colors: ['#35905a', '#72bf4e', '#c6e25a'],
+    }));
+    const fl = place(flowerGeo(pick(r, ['#ff6f8e', '#ffd84d', '#fff4e4']), v), 0.0, 0.5, 0.0, r() * 6, 0.85);
+    const lf = new THREE.Group(); lf.position.y = 0.28; g.add(lf);
+    add(lf, merge([leaves, fl]), foliageMat());
+    g.userData.idle = (t) => { lf.rotation.z = 0.035 * Math.sin(t * 1.6 + ph); lf.rotation.x = 0.03 * Math.sin(t * 1.3 + ph * 1.7); };
   },
 
   flowers(g, r, ph) {
-    add(g, RB(0.94, 0.14, 0.94, 0.03), C.woodDeep, { pos: [0, 0.07, 0] });
-    add(g, RB(0.84, 0.06, 0.84, 0.02), '#6b4a34', { pos: [0, 0.15, 0], noOutline: true });
-    const cols = ['#ff7b9c', '#ffd84d', '#ffffff', '#a06ad8', '#ff9a3c', '#6fb4f0'];
-    const bl = [], fl = [];
-    for (let i = 0; i < 16; i++) {
-      const x = -0.34 + (i % 4) * 0.227 + (r() - 0.5) * 0.08, z = -0.34 + Math.floor(i / 4) * 0.227 + (r() - 0.5) * 0.08, h = 0.18 + r() * 0.14, c = pick(r, cols);
-      bl.push({ geo: CYL(0.008, 0.008, h, 4), pos: [x, 0.17 + h / 2, z], color: C.leaf3 }, { geo: SPH(0.05, 6, 5), pos: [x + 0.04, 0.2 + h * 0.3, z], scale: [1, 0.35, 0.6], color: C.leaf2 });
-      fl.push({ geo: SPH(0.058, 7, 5), pos: [x, 0.18 + h, z], scale: [1, 0.7, 1], color: c }, { geo: SPH(0.022, 5, 4), pos: [x, 0.21 + h, z], color: '#f2c14e' });
+    const wood = '#cf9560', woodD = '#a56d3e';
+    add(g, RB(0.94, 0.2, 0.11, 0.035), wood, { pos: [0, 0.1, 0.415] });
+    add(g, RB(0.94, 0.2, 0.11, 0.035), wood, { pos: [0, 0.1, -0.415] });
+    add(g, RB(0.11, 0.2, 0.74, 0.035), woodD, { pos: [0.415, 0.1, 0] });
+    add(g, RB(0.11, 0.2, 0.74, 0.035), woodD, { pos: [-0.415, 0.1, 0] });
+    add(g, RB(0.8, 0.2, 0.8, 0.04), '#6b4630', { pos: [0, 0.075, 0] });
+    const mound = cached('bedmound', () => leafBallGeo({
+      blobs: [[-0.22, 0.2, 0.1, 0.19, { sy: 0.55 }], [0.2, 0.2, -0.05, 0.2, { sy: 0.55 }], [0.0, 0.2, -0.22, 0.17, { sy: 0.55 }], [-0.05, 0.2, 0.26, 0.16, { sy: 0.5 }]],
+      leaves: 120, leafSize: 0.1, seed: 12, colors: ['#3a9456', '#7cc04e', '#c4e05a'],
+    }));
+    const cols = ['#ff6f8e', '#ffd84d', '#fff4e4', '#b07ae0', '#ff9a3c', '#ff6f8e'];
+    const list = [mound];
+    for (let i = 0; i < 12; i++) {
+      const x = -0.27 + (i % 4) * 0.18 + (r() - 0.5) * 0.06, z = -0.25 + Math.floor(i / 4) * 0.25 + (r() - 0.5) * 0.06;
+      list.push(place(flowerGeo(pick(r, cols), Math.floor(r() * 4)), x, 0.16, z, r() * 6, 0.9 + r() * 0.3));
     }
-    addVC(g, bl, T);
-    const fm = addVC(g, fl, T);
-    g.userData.idle = (t) => { fm.rotation.z = 0.02 * Math.sin(t * 1.4 + ph); fm.rotation.x = 0.015 * Math.sin(t * 1.1 + ph); };
+    const fm = add(g, merge(list), foliageMat());
+    g.userData.idle = (t) => { fm.rotation.z = 0.014 * Math.sin(t * 1.4 + ph); fm.rotation.x = 0.01 * Math.sin(t * 1.1 + ph); };
   },
 
   water(g, r, ph) {
-    // The floor is the water; just a few subtle ripple rings and an occasional lily pad.
-    const rm = toonOwn('#ffffff', {}); rm.transparent = true; rm.opacity = 0.45; rm.depthWrite = false;
+    // The floor is the water (teal); this adds ripples, lily pads and a lotus well inside the cell edges so neighbours join up.
+    const rm = toonOwn('#e6fffb', {}); rm.transparent = true; rm.opacity = 0.5; rm.depthWrite = false;
+    const rings = [];
     for (let i = 0; i < 2; i++) {
-      const ring = add(g, TOR(0.18 + i * 0.12, 0.008, 4, 22), rm, { pos: [(r() - 0.5) * 0.4, 0.012, (r() - 0.5) * 0.4], rot: [PI / 2, 0, 0], ...T });
-      ring.userData.ph = ph + i;
+      const ring = add(g, TOR(0.17 + i * 0.12, 0.011, 5, 28), rm, { pos: [(r() - 0.5) * 0.3, 0.012, (r() - 0.5) * 0.3], rot: [PI / 2, 0, 0], ...T });
+      ring.userData.ph = ph + i * 2; rings.push(ring);
     }
-    if (r() < 0.35) {
-      const x = (r() - 0.5) * 0.5, z = (r() - 0.5) * 0.5;
-      add(g, CYL(0.1, 0.1, 0.012, 10), '#4fae5a', { pos: [x, 0.012, z], ...T });
-      add(g, SPH(0.03, 6, 4), '#ff9ac0', { pos: [x + 0.02, 0.03, z], scale: [1, 0.7, 1], ...T });
+    const padGeo = cached('pad', () => {
+      let c = new THREE.CircleGeometry(0.12, 18, 0.5, PI * 2 - 0.6); c.rotateX(-PI / 2); c = flat(c); c.deleteAttribute('uv');
+      const p = c.attributes.position, col = new Float32Array(p.count * 3);
+      for (let i = 0; i < p.count; i++) { const d = Math.hypot(p.getX(i), p.getZ(i)) / 0.12, k = mixRGB(hexRGB('#4aa84e'), hexRGB('#86cf5a'), d); col.set(k, i * 3); p.setY(i, 0.012 + 0.016 * d * d); }
+      c.setAttribute('color', new THREE.BufferAttribute(col, 3)); c.computeVertexNormals();
+      return c;
+    });
+    const list = [];
+    const n = 2 + Math.floor(r() * 2);
+    for (let i = 0; i < n; i++) {
+      const a = r() * 6.28, d = 0.12 + r() * 0.16;
+      list.push(place(padGeo, Math.cos(a) * d, 0, Math.sin(a) * d, r() * 6, 0.8 + r() * 0.5));
     }
-    const rings = g.children.filter((m) => m.userData.ph !== undefined);
-    g.userData.idle = (t) => { for (let i = 0; i < rings.length; i++) { const m = rings[i]; const s = 1 + 0.12 * Math.sin(t * 1.2 + m.userData.ph); m.scale.set(s, s, 1); } };
+    if (r() < 0.6) list.push(place(flowerGeo(pick(r, ['#ff9ac0', '#fff4e4', '#ffd0e4']), Math.floor(r() * 4)), (r() - 0.5) * 0.3, -0.06, (r() - 0.5) * 0.3, r() * 6, 0.55));
+    const pm = add(g, merge(list), toonVC(), { shadow: false });
+    pm.material = foliageMat();
+    g.userData.idle = (t) => { for (const m of rings) { const s = 1 + 0.12 * Math.sin(t * 1.2 + m.userData.ph); m.scale.set(s, s, 1); } pm.position.y = 0.004 * Math.sin(t * 1.6 + ph); };
   },
 
   haybale(g, r) {
-    const hay = '#e6c35a', hayD = '#c9a23e';
-    add(g, RB(0.84, 0.46, 0.6, 0.07), hay, { pos: [0, 0.23, 0] });
-    add(g, RB(0.84, 0.44, 0.58, 0.07), hay, { pos: [0.02, 0.69, 0.02], rot: [0, 0.06, 0] });
-    for (const x of [-0.22, 0.22]) for (const y of [0.23, 0.69]) add(g, RB(0.035, y > 0.5 ? 0.45 : 0.47, 0.64, 0.01, 1), '#a8793a', { pos: [x, y, 0.005], ...T });
-    const st = [];
-    for (let i = 0; i < 22; i++) st.push({ geo: CYL(0.006, 0.006, 0.14 + r() * 0.1, 4), pos: [(r() - 0.5) * 0.8, 0.0 + r() * 0.9, 0.31 + r() * 0.03], rot: [0.3, 0, (r() - 0.5) * 2.4], color: i % 3 ? hayD : '#f2d97a' });
-    addVC(g, st, T);
+    const Rr = 0.33, Lh = 0.4, ed = 0.08;
+    const prof = [[0, -Lh], [Rr - ed, -Lh]];
+    for (let i = 1; i <= 4; i++) { const a = (i / 4) * PI / 2; prof.push([Rr - ed + Math.sin(a) * ed, -Lh + ed - Math.cos(a) * ed]); }
+    for (let i = 0; i <= 4; i++) { const a = (i / 4) * PI / 2; prof.push([Rr - ed + Math.cos(a) * ed, Lh - ed + Math.sin(a) * ed]); }
+    prof.push([0, Lh]);
+    const hay = hexRGB('#ecc85c'), hayD = hexRGB('#cfa23f'), hayL = hexRGB('#f6e08e');
+    let bale = new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x, y)), 28);
+    bale = flat(bale); bale.deleteAttribute('uv');
+    const p = bale.attributes.position, n = bale.attributes.normal, cl = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const rad = Math.hypot(p.getX(i), p.getZ(i)), ang = Math.atan2(p.getZ(i), p.getX(i));
+      let c;
+      if (Math.abs(n.getY(i)) > 0.85) c = mixRGB(hayL, hayD, 0.5 + 0.5 * Math.sin(rad * 75)); // end faces: straw spiral
+      else c = mixRGB(hay, hayD, 0.5 + 0.5 * Math.sin(ang * 21 + p.getY(i) * 6) * 1.0 * (0.5 + 0.5 * Math.sin(p.getY(i) * 40)));
+      cl.set(c, i * 3);
+    }
+    bale.setAttribute('color', new THREE.BufferAttribute(cl, 3));
+    bale.rotateZ(PI / 2);
+    const parts = [];
+    for (const x of [-0.18, 0.18]) parts.push({ geo: TOR(Rr + 0.004, 0.022, 6, 28), pos: [x, 0, 0], rot: [0, PI / 2, 0], color: '#b9693a' });
+    for (let i = 0; i < 9; i++) parts.push({ geo: CYL(0.012, 0.012, 0.1 + r() * 0.08, 5), pos: [(r() - 0.5) * 0.9, 0.012, 0.32 + r() * 0.12], rot: [PI / 2, 0, (r() - 0.5) * 3], color: i % 2 ? '#f4dc84' : '#d6b048' });
+    const dec = mergeVC(parts);
+    const mesh = add(g, merge([bale, dec]), toonVC(), { pos: [0, Rr, 0] });
+    dec.translate(0, 0, 0); mesh.rotation.y = (r() - 0.5) * 0.25; mesh.position.y = Rr;
   },
 
   campfire(g, r, ph) {
-    add(g, CYL(0.4, 0.42, 0.01, 18), '#5a4a3a', { pos: [0, 0.005, 0], ...T });
+    const logs = [{ geo: CYL(0.285, 0.3, 0.014, 20), pos: [0, 0.007, 0], color: '#4a3c3c' }];
+    const logBody = '#86532f', logEnd = '#e8c088';
+    const addLog = (from, to, rad) => {
+      const a = new THREE.Vector3(...from), b = new THREE.Vector3(...to), d = b.clone().sub(a), L = d.length(), m = a.clone().add(b).multiplyScalar(0.5), dir = d.clone().normalize();
+      logs.push({ geo: CYL(rad, rad, L, 10), pos: m.toArray(), dir: dir.toArray(), color: logBody });
+      for (const s of [-1, 1]) { const e = m.clone().addScaledVector(dir, s * (L / 2 + 0.002)); logs.push({ geo: CYL(rad * 0.94, rad * 0.94, 0.012, 10), pos: e.toArray(), dir: dir.toArray(), color: logEnd }); }
+    };
+    for (let i = 0; i < 5; i++) { // logs leaning in
+      const a = (i / 5) * PI * 2 + 0.3 + r() * 0.2;
+      addLog([Math.cos(a) * 0.23, 0.06, Math.sin(a) * 0.23], [Math.cos(a) * 0.06, 0.17 + (i % 2) * 0.04, Math.sin(a) * 0.06], 0.052 + (i % 2) * 0.008);
+    }
+    addLog([-0.2, 0.05, 0.1], [0.2, 0.05, 0.14], 0.055);
     const stones = [];
-    for (let i = 0; i < 9; i++) {
-      const a = (i / 9) * PI * 2;
-      stones.push({ geo: new THREE.DodecahedronGeometry(0.075 + r() * 0.02, 0), pos: [Math.cos(a) * 0.32, 0.05, Math.sin(a) * 0.32], rot: [i, i * 2, 0], scale: [1.2, 0.8, 1], color: i % 2 ? C.stone : C.stoneLight, flat: true });
-    }
-    addVC(g, stones);
-    for (let i = 0; i < 4; i++) { // logs leaning in
-      const a = (i / 4) * PI * 2 + 0.4;
-      add(g, CYL(0.05, 0.05, 0.4, 8), '#7a4a2c', { pos: [Math.cos(a) * 0.1, 0.1, Math.sin(a) * 0.1], rot: [Math.sin(a) * 1.0, 0, -Math.cos(a) * 1.0], noOutline: true });
-    }
-    add(g, CYL(0.15, 0.15, 0.015, 12), toon('#ff6a2a', { emissive: '#ff6a2a', emissiveIntensity: 1 }), { pos: [0, 0.015, 0], ...T });
-    const flames = [
-      add(g, CONE(0.17, 0.44, 7), flameMat(C.flameO), { pos: [0, 0.3, 0], ...T }),
-      add(g, CONE(0.1, 0.3, 7), flameMat(C.flameY, 1), { pos: [0.03, 0.24, 0.07], ...T }),
-      add(g, CONE(0.08, 0.24, 6), flameMat(C.flameO), { pos: [-0.11, 0.2, 0.02], ...T }),
-      add(g, CONE(0.07, 0.2, 6), flameMat(C.flameY, 1), { pos: [0.1, 0.18, -0.08], ...T }),
-    ];
-    const base = flames.map((f) => f.position.y);
-    const sparks = [0, 1, 2, 3].map(() => add(g, SPH(0.014, 5, 4), flameMat(C.flameY, 1.5), { ...T }));
+    for (let i = 0; i < 8; i++) { const a = (i / 8) * PI * 2 + 0.2; stones.push(place(rockGeo(i, 0), Math.cos(a) * 0.37, 0, Math.sin(a) * 0.37, i * 2.1, 0.3 + r() * 0.06)); }
+    add(g, merge([mergeVC(logs), ...stones]), toonVC());
+    const emb = [];
+    for (let i = 0; i < 6; i++) { const a = r() * 6.28, d = 0.05 + r() * 0.17; emb.push({ geo: SPH(0.028 + r() * 0.014, 6, 4), pos: [Math.cos(a) * d, 0.03, Math.sin(a) * d], scale: [1.2, 0.55, 1.2] }); }
+    addMerged(g, emb, flameMat('#ff6a2a', 1.3), { ...T });
+    // stylised layered tongues of flame
+    const tongue = (R0, H) => {
+      const pts = []; for (let i = 0; i <= 10; i++) { const t = i / 10; pts.push(new THREE.Vector2(Math.max(0.0005, R0 * Math.sin(PI * Math.pow(t, 0.7)) * (1 - 0.35 * t)) * (t > 0.97 ? 0.1 : 1), t * H)); }
+      pts[10].x = 0.0005;
+      return new THREE.LatheGeometry(pts, 14);
+    };
+    const specs = [[0.16, 0.5, 0, 0], [0.1, 0.34, 0.11, 0.08], [0.09, 0.3, -0.11, 0.04], [0.08, 0.26, 0.03, -0.11]];
+    const flames = specs.map(([R0, H, x, z], i) => {
+      const outer = add(g, tongue(R0, H), flameMat(i % 2 ? '#ff8a30' : '#ff7a2a', 0.95), { pos: [x, 0.04, z], ...T });
+      add(outer, tongue(R0 * 0.72, H * 0.66), flameMat('#ffe066', 1.3), { pos: [0, -0.005, R0 * 0.38], ...T });
+      return outer;
+    });
+    const sparks = [0, 1].map(() => add(g, SPH(0.014, 5, 4), flameMat(C.flameY, 1.5), { ...T }));
     const glow = makeFireGlow(g, 0, 0.02, 0, 0.7);
     g.userData.idle = (t) => {
       for (let i = 0; i < flames.length; i++) {
         const f = flames[i];
-        const k = 1 + 0.14 * Math.sin(t * 11 + i * 2.1 + ph) + 0.07 * Math.sin(t * 23 + i);
+        const k = 1 + 0.15 * Math.sin(t * 11 + i * 2.1 + ph) + 0.07 * Math.sin(t * 23 + i);
         const q = 1 / Math.sqrt(k);
-        f.scale.set(q, k, q); f.position.y = base[i] + (k - 1) * 0.12;
-        f.rotation.z = 0.06 * Math.sin(t * 7 + i * 1.7 + ph);
+        f.scale.set(q, k, q);
+        f.rotation.z = 0.08 * Math.sin(t * 7 + i * 1.7 + ph); f.rotation.x = 0.06 * Math.sin(t * 6 + i * 2.3 + ph);
       }
       for (let i = 0; i < sparks.length; i++) {
-        const s = sparks[i];
-        const u = ((t * 0.5 + i * 0.27 + ph) % 1);
+        const s = sparks[i], u = ((t * 0.5 + i * 0.5 + ph) % 1);
         s.position.set(Math.sin(i * 2.4 + u * 3) * 0.12, 0.3 + u * 0.5, Math.cos(i * 1.7 + u * 3) * 0.12);
         s.scale.setScalar(Math.max(0.001, 1 - u));
       }
