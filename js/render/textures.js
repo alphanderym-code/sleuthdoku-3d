@@ -45,7 +45,7 @@ export function toHex(col) { try { return '#' + new THREE.Color(col).getHexStrin
 export function wrap9(S, fn) { for (const dx of [-S, 0, S]) for (const dy of [-S, 0, S]) fn(dx, dy); }
 
 export const FLOOR_BASE = {
-  wood: '#f0c690', tile: '#aee8dd', grass: '#c0c84a', sand: '#f9d6a0',
+  wood: '#f0c690', tile: '#aee8dd', grass: '#b4b84c', sand: '#f9d6a0',
   stone: '#d6c8b6', carpet: '#e5799c', snow: '#fcf6ec', checker: '#fff0c6',
   water: '#4cc6c8', brick: '#e29c78', dirt: '#dcb282',
   fairway: '#a3b552', green: '#b4c45e', // golf (Extreme scenes)
@@ -153,8 +153,8 @@ export function floorTexture(type) {
       break;
     }
     case 'grass': {
-      for (let i = 0; i < 16; i++) patch(x, S, r() * S, r() * S, 120 + r() * 170, '236,236,96', 0.34, { sy: 0.5 + r() * 0.4, rot: r() * 3 });
-      for (let i = 0; i < 16; i++) patch(x, S, r() * S, r() * S, 110 + r() * 160, '110,170,56', 0.3, { sy: 0.5 + r() * 0.4, rot: r() * 3 });
+      for (let i = 0; i < 16; i++) patch(x, S, r() * S, r() * S, 120 + r() * 170, '214,204,96', 0.34, { sy: 0.5 + r() * 0.4, rot: r() * 3 });
+      for (let i = 0; i < 16; i++) patch(x, S, r() * S, r() * S, 110 + r() * 160, '116,156,62', 0.3, { sy: 0.5 + r() * 0.4, rot: r() * 3 });
       for (let i = 0; i < 34; i++) { // simple leaf blades in small fans
         const cx = r() * S, cy = r() * S, light = r() < 0.5;
         for (let k = -1; k <= 1; k++) blade(x, S, cx + k * 8, cy, 30 + r() * 14, 5, k * 9, light ? hsl(base, 9, 6, 6, 0.8) : hsl(base, -16, 8, -4, 0.7));
