@@ -15,6 +15,9 @@ if (!C.__softShade) {
   vec3 irradiance = dotNL * directLight.color * mix( vec3( 1.12, 0.86, 0.78 ), vec3( 1.0 ), smoothstep( 0.0, 0.6, dotNL ) );`);
   C.opaque_fragment = `#ifdef STANDARD
   float softFr = 1.0 - saturate( dot( normalize( normal ), normalize( vViewPosition ) ) );
+  // Specular blows up where the surface turns edge-on (N.V -> 0 in the GGX visibility term): the silhouette
+  // pixels flashed white, a dotted line along every edge. Fade it out at grazing angles and cap what is left.
+  outgoingLight += min( totalSpecular, vec3( 0.45 ) ) * ( 1.0 - smoothstep( 0.55, 0.9, softFr ) ) - totalSpecular;
   // kept low and faded out at the very silhouette: a strong lift there read as a white contour around objects
   outgoingLight *= 1.0 + 0.16 * softFr * softFr * ( 1.0 - smoothstep( 0.82, 1.0, softFr ) );
   // tame sub-pixel specular so MSAA edges do not sparkle in the HDR buffer (emission may still bloom)
