@@ -156,7 +156,11 @@ test('generated puzzles with the new mechanics stay unique (very-easy .. hard)',
   generated('medium', 7, [1, 2, 3, 4, 5, 6, 7, 8]);
   generated('hard', 8, [1, 2, 3, 4, 5, 6]);
   generated('hard', 9, [1, 2, 3]);
-  for (const k of Object.keys(TALLY)) assert.ok(TALLY[k] > 0, `${k} never generated: ${JSON.stringify(TALLY)}`);
+  // "Could see" is still understood by the solver (older saves) but is no longer generated: it read as nonsense.
+  for (const k of Object.keys(TALLY)) {
+    if (k === 'sees') assert.equal(TALLY[k], 0, `sees still generated: ${JSON.stringify(TALLY)}`);
+    else assert.ok(TALLY[k] > 0, `${k} never generated: ${JSON.stringify(TALLY)}`);
+  }
   console.log(`       tally: ${JSON.stringify(TALLY)}`);
 });
 test('extreme 16x16 mixes every mechanic, unique, fast', () => {

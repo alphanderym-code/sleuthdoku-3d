@@ -513,6 +513,32 @@ test('large-board scenes (park, cruise, ski, airport): unique at 12 and 16, new 
   for (const k of ['park', 'cruise', 'ski', 'airport']) assert.ok(SCENES.find((s) => s.key === k).extreme, `${k} extreme`);
 });
 
+// Person-to-person clues must form no loop (A→B→C→A, or two clues on one pair): someone has to be placeable first.
+function relativeLoop(p) {
+  const up = {};
+  const root = (x) => { while (up[x] && up[x] !== x) x = up[x]; return x; };
+  for (const ch of p.characters) for (const cl of ch.clues) {
+    const o = clueOther(cl);
+    if (o == null) continue;
+    const a = root(ch.id), b = root(o);
+    if (a === b) return `${ch.id} → ${o}`;
+    up[a] = b;
+  }
+  return null;
+}
+test('no loops of relative clues and no "could see" clues', () => {
+  const ps = [...CASES];
+  for (const difficulty of ['very-easy', 'easy', 'medium', 'hard']) {
+    for (let s = 0; s < 6; s++) ps.push(generatePuzzle({ difficulty, seed: `loop-${difficulty}-${s}` }));
+  }
+  ps.push(generatePuzzle({ difficulty: 'extreme', seed: 'loop-extreme' }));
+  for (const p of ps) {
+    const l = relativeLoop(p);
+    assert.equal(l, null, `${p.id}: relative clues loop at ${l}`);
+    assert.ok(!p.characters.some((ch) => ch.clues.some((cl) => cl.type === 'sees')), `${p.id}: "could see" clue`);
+  }
+});
+
 console.log(`
 ${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

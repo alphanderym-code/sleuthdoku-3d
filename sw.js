@@ -1,5 +1,5 @@
 // Tiny Crimes service worker. Regenerate the list with: node tools/sw-list.mjs
-const CACHE = 'tinycrimes-v9';
+const CACHE = 'tinycrimes-v10';
 const PRECACHE = [
   './',
   './index.html',
