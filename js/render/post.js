@@ -72,7 +72,23 @@ void main(){
 }`;
 
 const FINAL_FRAG = `
-uniform sampler2D tColor, tAO, tBloom; uniform float uAO, uBloom, uExposure, uSat, uContrast, uTintAmt, uVig; uniform vec3 uShadowTint, uAoTint; varying vec2 vUv;
+uniform sampler2D tColor, tAO, tBloom, tDepth; uniform float uAO, uBloom, uExposure, uSat, uContrast, uTintAmt, uVig, uAoUp, uFar; uniform vec2 uAoPx; uniform mat4 uInvProj;
+uniform vec3 uShadowTint, uAoTint; varying vec2 vUv;
+// Half-res AO, upsampled by depth: plain bilinear lets the unoccluded sky (ao = 1) bleed onto object edges as a pale halo.
+float aoUp(){
+  if (uAoUp < 0.5) return texture2D(tAO, vUv).r;
+  float d = texture2D(tDepth, vUv).x;
+  if (d >= 0.99999) return 1.0;
+  vec4 p = uInvProj * vec4(vec3(vUv, d) * 2.0 - 1.0, 1.0); float z = -p.z / p.w / uFar;
+  float s = 0.0, w = 0.0;
+  for (int i = 0; i < 4; i++) {
+    vec2 o = vec2(i == 0 || i == 2 ? -0.5 : 0.5, i < 2 ? -0.5 : 0.5) * uAoPx;
+    vec4 q = texture2D(tAO, vUv + o);
+    float k = exp(-abs(q.g - z) * uFar * 6.0) + 1e-4;
+    s += q.r * k; w += k;
+  }
+  return s / w;
+}
 vec3 neutral(vec3 color){
   const float S = 0.8 - 0.04; const float D = 0.15;
   float x = min(color.r, min(color.g, color.b));
@@ -87,7 +103,7 @@ vec3 neutral(vec3 color){
 }
 void main(){
   vec3 c = texture2D(tColor, vUv).rgb;
-  float ao = mix(1.0, texture2D(tAO, vUv).r, uAO);
+  float ao = mix(1.0, aoUp(), uAO);
   c *= mix(uAoTint, vec3(1.0), ao);
   c += texture2D(tBloom, vUv).rgb * uBloom;
   c = neutral(max(c, 0.0) * uExposure);
@@ -109,6 +125,9 @@ export class Post {
     this.level = 3; this.maxLevel = 3; this._locked = false;
     this._w = 0; this._h = 0; this._times = []; this._last = 0; this._slow = 0;
     if (!renderer.extensions.has('EXT_color_buffer_half_float') && !renderer.extensions.has('EXT_color_buffer_float')) this.level = this.maxLevel = 0;
+    // Tablets and phones (iPadOS reports itself as a Mac, so go by the pointer) have retina screens and mobile GPUs:
+    // full-res AO at 2x is several times a laptop's pixel count, so they start one level down.
+    else if (typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches) this.level = 2;
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 2, 0, 0, 2], 2));
@@ -125,7 +144,7 @@ export class Post {
     this.mUp = mk(UP_FRAG, { tColor: T(), tAdd: T(), uPx: V2() });
     this.mFinal = mk(FINAL_FRAG, {
       tColor: T(), tAO: T(), tBloom: T(), uAO: { value: 1 }, uBloom: { value: 0.12 }, uExposure: { value: 1 }, uSat: { value: 1 }, uContrast: { value: 1 },
-      uTintAmt: { value: 0 }, uVig: { value: 0 }, uShadowTint: { value: new THREE.Color() }, uAoTint: { value: new THREE.Color() },
+      uTintAmt: { value: 0 }, uVig: { value: 0 }, tDepth: T(), uAoUp: { value: 0 }, uFar: { value: 100 }, uAoPx: V2(), uInvProj: { value: new THREE.Matrix4() }, uShadowTint: { value: new THREE.Color() }, uAoTint: { value: new THREE.Color() },
     });
     this._white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1); this._white.needsUpdate = true;
   }
@@ -201,6 +220,11 @@ export class Post {
     }
     const f = this.mFinal.uniforms;
     f.tColor.value = this.rt.texture; f.tAO.value = this.ao1 ? this.ao1.texture : this._white; f.tBloom.value = src.texture;
+    f.uAoUp.value = this.ao1 ? 1 : 0;
+    if (this.ao1) {
+      f.tDepth.value = this.rt.depthTexture; f.uFar.value = camera.far; f.uInvProj.value.copy(camera.projectionMatrixInverse);
+      f.uAoPx.value.set(1 / this.ao1.width, 1 / this.ao1.height);
+    }
     this._pass(this.mFinal, null);
     r.shadowMap.autoUpdate = auto;
   }
@@ -209,9 +233,9 @@ export class Post {
     const now = performance.now(), dt = now - this._last; this._last = now;
     if (dt <= 0 || dt > 250) { this._times.length = 0; return; } // tab was hidden / first frame
     this._times.push(dt);
-    if (this._times.length < 90) return;
-    const t = this._times.sort((a, b) => a - b)[60]; this._times.length = 0;
-    this._slow = t > 30 ? this._slow + 1 : 0;
+    if (this._times.length < 60) return;
+    const t = this._times.sort((a, b) => a - b)[40]; this._times.length = 0;
+    this._slow = t > 24 ? this._slow + 1 : 0; // below ~40 fps feels laggy on touch
     if (this._slow >= 2 && this.level > 0) { this.level--; this._slow = 0; this._dirty = true; if (this.level === 0) this._free(); }
   }
 
