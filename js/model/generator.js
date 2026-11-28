@@ -5,7 +5,7 @@
 import { makeRng } from './rng.js';
 import { isBlockingType } from './objects.js';
 import { roomAt, objectAt, isBeside, isCorner } from './grid.js';
-import { evaluateClue, evaluateNote, roomNumber, lineOfSight, roomAdjacency } from './clues.js';
+import { evaluateClue, evaluateNote, roomNumber, roomAdjacency, clueOther } from './clues.js';
 import { categoriesPresent } from './categories.js';
 import { weaponsForScene, woundOf } from './weapons.js';
 import { solve, prepare, murdererOf } from './solver.js';
@@ -531,7 +531,6 @@ function cluePool(puzzle, sol, id, victimId) {
     }
     if (dr && dc) add({ type: 'dir', dir: ns + ew, of: ch.id });
     if (Math.abs(dr) === Math.abs(dc)) add({ type: 'diagonal', with: ch.id });
-    if (lineOfSight(puzzle, p, q)) add({ type: 'sees', who: ch.id }, 1.5);
   }
   return out;
 }
@@ -742,6 +741,20 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
     .map((n) => ({ ...n, w: n.w * (W[n.note.type] ?? 1) }));
   const clueW = (c) => (W[wkey(c.clue)] ?? 0.5) * c.w;
 
+  // Clues tying two people together ("north of Bernard") must not close a loop (A→B→C→A, or two clues
+  // on the same pair): a ring of purely relative clues gives the player no one to place first.
+  const loopFree = (st) => {
+    const up = {};
+    const root = (x) => { while (up[x] && up[x] !== x) x = up[x]; return x; };
+    for (const id of suspectIds) for (const cl of st.clues[id]) {
+      const o = clueOther(cl);
+      if (o == null) continue;
+      const a = root(id), b = root(o);
+      if (a === b) return false;
+      up[a] = b;
+    }
+    return true;
+  };
   // State: clue lists per suspect + notes.
   let state = { clues: {}, notes: [] };
   // 16x16: the weak-clue state has far too many solutions for the solver, so start from two strong
@@ -754,6 +767,14 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
       if (line.length) state.clues[id].push(pickW(rng, line, clueW).clue);
     } else state.clues[id] = [pickW(rng, pools[id], clueW).clue];
   }
+  // Starting picks must not form a loop either: re-pick a relative clue as an absolute one.
+  for (const id of suspectIds) {
+    if (loopFree(state)) break;
+    const solo = pools[id].filter((c) => clueOther(c.clue) == null);
+    if (!solo.length || state.clues[id].every((cl) => clueOther(cl) == null)) continue;
+    state.clues[id] = state.clues[id].map((cl) => (clueOther(cl) == null ? cl : pickW(rng, solo, clueW).clue));
+  }
+  if (!loopFree(state)) return null;
   if (notesAll.length && rng.chance(B.notePrior)) state.notes.push(pickW(rng, notesAll, (n) => n.w).note);
 
   const build = (st) => ({
@@ -795,7 +816,7 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
       if (st.notes.length < B.maxNotes) out.push({ kind: 'note', note: n.note, w: n.w * B.noteW });
       st.notes.forEach((_, idx) => out.push({ kind: 'swapNote', idx, note: n.note, w: n.w * 0.5 }));
     }
-    return out;
+    return out.filter((op) => !op.clue || clueOther(op.clue) == null || loopFree(apply(st, op)));
   };
   const sample = (list, k) => {
     const pool = list.slice(), out = [];
@@ -856,7 +877,8 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
       const opts = pools[id].filter((x) => !have.has(keyOf(x.clue)));
       if (!opts.length) return null;
       const c = pickW(rng, opts, (x) => clueW(x) * (STRONG.has(wkey(x.clue)) ? 0.2 : 1));
-      return apply(st, { kind: 'replace', owner: id, idx: rng.pick(idxs), clue: c.clue });
+      const next = apply(st, { kind: 'replace', owner: id, idx: rng.pick(idxs), clue: c.clue });
+      return loopFree(next) ? next : null;
     };
     const tryStep = (forceDrop) => {
       const st = weakenStep(state, forceDrop);
@@ -872,7 +894,7 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
       const opts = notesAll.filter((n) => n.note.type === type);
       if (opts.length) state = { ...state, notes: [...state.notes, pickW(rng, opts, (n) => n.w).note] };
     }
-    const FEATURES = [new Set(['besideCategory', 'notBesideCategory']), new Set(['sees'])];
+    const FEATURES = [new Set(['besideCategory', 'notBesideCategory'])];
     for (const kinds of FEATURES) {
       let have = 0;
       for (let tries = 0; tries < 30 && have < 2 && now() < tEnd - 300; tries++) {
@@ -882,6 +904,7 @@ function attempt(rng, N, difficulty, sceneOpt, seed, budgetMs) {
         if (!opts.length || !idxs.length) continue;
         const c = pickW(rng, opts, (x) => x.w);
         const st = apply(state, { kind: 'replace', owner: id, idx: rng.pick(idxs), clue: c.clue });
+        if (!loopFree(st)) continue;
         const r = solve(build(st), { limit: 2, nodeLimit: 8000 });
         if (r.aborted || r.count !== 1) continue;
         state = st; protectedKeys.add(keyOf(c.clue)); have++;

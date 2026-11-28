@@ -15,6 +15,15 @@ export function buildWorld(view, puzzle) {
   (THEMES[theme] || buildTown)(c);
   c.finish();
   const anims = c.anims, moodFns = c.moodFns;
+  // One failing hook only drops itself, never the whole world's motion.
+  const step = (t, dt) => {
+    for (let i = 0; i < anims.length; i++) {
+      try { anims[i](t, dt); } catch (e) { console.error(e); anims.splice(i--, 1); }
+    }
+  };
+  // Pose everything once: instanced movers start at the identity matrix (the board centre), so without this
+  // a frame-less world (reduced motion, or a hook that never runs) leaves a car and its smoke parked mid-board.
+  step(0, 0);
   return {
     group: c.group,
     lampSpots: c.lampSpots.slice(0, 4),
@@ -26,6 +35,6 @@ export function buildWorld(view, puzzle) {
       if (c.clouds) c.clouds.material.opacity = name === 'night' ? 0.18 : 0.3;
       for (const f of moodFns) f(name, preset);
     },
-    update(t, dt) { for (let i = 0; i < anims.length; i++) anims[i](t, dt); },
+    update: step,
   };
 }
